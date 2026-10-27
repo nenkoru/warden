@@ -80,6 +80,7 @@ Domain: **go-project** (`$DEMO/greet`) · mode: **act** · triage v1 · sandbox:
 | `k8s-namespace` | Warning events and CrashLoopBackOff become incidents, images become inventory, a fix is a proposal file. `kubectl apply` only with the `k8s.apply` grant, always asked. | [k8s-namespace](docs/usecases/k8s-namespace.md) |
 | `macos` | Disk, regenerable caches (cleaned only by the tool's own command, only from your list, with the `mac.clean` grant), battery and thermals, Homebrew as inventory. Starts in dry-run. | [macos](docs/usecases/macos.md) |
 | `linux-server` | Read-only: disk, failed systemd units, journal errors, dpkg packages as inventory, CISA advisories. Every fix is a proposal. | [linux-server](docs/usecases/linux-server.md) |
+| `github-repo` | Maintains one GitHub repository: works issues into draft PRs (CI decides; one fix round from the logs), reviews outside PRs with one comment (never merges them, never runs their code), merges its own, Dependabot's and trusted agents' PRs on green CI, cuts patch/minor releases with a generated CHANGELOG. Kill switch (`warden-pause` label or `PAUSE` file), protected paths → `needs-human`, untrusted text never drives a merge or release, a daily model budget, several brains routed per task, delegation to other agents. | [github-maintainer](docs/usecases/github-maintainer.md) |
 | `linux-host` | A GPU/model-serving host: disk, failed units (system and user), GPU temperature and ECC, the health of the service it exists for, with quiet hours. Read-only. | [linux-server](docs/usecases/linux-server.md#linux-host) |
 
 Also: [signals — news, alerts and messages](docs/usecases/signals.md) and
@@ -116,7 +117,9 @@ Also: [signals — news, alerts and messages](docs/usecases/signals.md) and
 - **Floors are code, not prompts:** `reversible`, `always_ask`, `grant`, `max_per_day`, `dry_run_only`,
   `where = "worktree"`, `sandbox` + `net`. The policy decides in order: deny rules → floors → rules and pins → learned
   trust → budgets → dry-run.
-- **What Warden never does:** push or merge, delete your data (only a tool's own clean command, never a generic `rm`),
+- **What Warden never does:** push or merge (except the `github-repo` pack's maintainer mode, which pushes only its own
+  `warden/` branches over a token from a file and merges only under the rules in
+  [its page](docs/usecases/github-maintainer.md)), delete your data (only a tool's own clean command, never a generic `rm`),
   touch your agent configs, or send messages for you unless `replies = true`. New domains start in dry-run.
 - **By design outside the sandbox:** `tool-clean` runs a cache tool's own clean command unsandboxed (a "write only here"
   box would break `go clean -cache`). It is gated by the `mac.clean` grant, your allowlist and an exact argv match, and

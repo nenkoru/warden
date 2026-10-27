@@ -7,6 +7,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- The `github-repo` pack: Warden maintains one GitHub repository — issues worked into draft PRs (`work-issue`, CI
+  decides, one fix round from the failed jobs' logs), outside PRs reviewed with one `COMMENT` per head commit
+  (`review-pr`, never merged, their code never run), its own, Dependabot's and `trusted_authors`' PRs squash-merged on
+  green CI (`merge-pr`), patch/minor releases with a CHANGELOG generated from merged PR titles and a tag on the release
+  PR's merge commit (`release`), hand-offs to other agents through a templated command (`delegate`,
+  `pickup-branch`). Observers `github-issues`, `github-prs`, `github-main`, `github-pause`; a GitHub REST client with
+  the token from a file (never in argv, URLs, logs or errors); `warden github-note`, a hook command that comments on a
+  pinned "Warden log" issue. See `docs/usecases/github-maintainer.md` and `deploy/k8s/github-maintainer.yaml`.
+- A kill switch for any domain: `[[pause]]` steps run first every tick; a finding (or a pause step that fails) makes
+  the tick observe and report only, every act refused.
+- Several brains, routed per task: `[brains.NAME]`, `brain_for = { task = "name" | "auto" }`, `brain_auto`; per-brain
+  `unavailable` windows (times and weekdays, `tz`), `api_key_file` (read at call time), `free`; an upstream that
+  answers 403 is routed around for a while; every report counts each brain's calls and tokens. `[brain]` alone still
+  means one brain for everything.
+- `[budget]`: a daily model-spend ledger (`per_day_usd`, `alert_every_usd`, `burn_per_hour_usd`, `prices`,
+  `free_models`, `upstream_proxy`). Endpoint brains are metered per call (LiteLLM's `x-litellm-response-cost` wins over
+  the price table), a Claude Code ACP brain through the meter's local proxy; over the cap no paid model is called and
+  brain acts are refused; alerts ping at once; every report header says `model spend today: $X of $Y`.
+- `digest = "daily"`: a `Digest` hook event once a day with the day's summary.
+- Floors `untrusted = "deny"` (a finding carrying untrusted input never drives the act), `needs_brain`, `clean_env`;
+  the sandbox can open loopback ports (a local metering proxy) and hide credential files.
+- Instance params accept arrays and tables (passed to packs as JSON).
+
 ### Security
 
 - Build with Go 1.26.10 (`toolchain go1.26.10`), which fixes GO-2026-6809 (crypto/x509: distrust compromised
