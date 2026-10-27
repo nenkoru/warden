@@ -1,51 +1,51 @@
 $ scripts/demo-k8s.sh   # FIXTURE: a fake kubectl prints recorded JSON; no cluster, no model; paths shown as $DEMO
 == FIXTURE: kubectl is $DEMO/bin/kubectl (recorded JSON, no cluster)
 == tick 1
-warden shop · k8s-namespace · act · sandbox sandbox-exec · 2 components · 3 findings (report 3, digest 0, ignore 0) · acted 3 · asks 0 · 612ms
-report: $DEMO/.warden/reports/20261027-192217.md
+warden shop · k8s-namespace · act · sandbox sandbox-exec · 4 components · 4 findings (report 4, digest 0, ignore 0) · acted 4 · asks 0 · 483ms
+report: $DEMO/.warden/reports/20261028-005552.md
 == tick 2 (quiet)
-warden shop · k8s-namespace · act · sandbox sandbox-exec · 2 components · 3 findings (report 3, digest 0, ignore 0) · acted 0 · asks 0 · 667ms
+warden shop · k8s-namespace · act · sandbox sandbox-exec · 4 components · 4 findings (report 4, digest 0, ignore 0) · acted 0 · asks 0 · 450ms
 quiet tick: nothing new worth telling (latest.md updated)
 == report (tick 1)
-# Warden «shop» · 2026-10-27 19:22
+# Warden «shop» · 2026-10-28 00:55
 
 Domain: **k8s-namespace** (`context=kind-demo namespace=shop`) · mode: **act** · triage v1 · sandbox: sandbox-exec
 
-**Worth your attention: 3** (done: 3, waiting for you: 0, important: 0).
+**Worth your attention: 4** (done: 4, waiting for you: 0, important: 0).
 
 ## Done
 
-- ✅ **CrashLoopBackOff: container api (7 restarts)** — proposal written: $DEMO/.warden/proposals/ebe408ade36d.md
-  - file: `$DEMO/.warden/proposals/ebe408ade36d.md`
-- ✅ **BackOff: Pod/api-7d9f4c** ×2 — proposal written: $DEMO/.warden/proposals/9cc2308096b5.md
-  - file: `$DEMO/.warden/proposals/9cc2308096b5.md`
-- ✅ **FailedMount: Pod/api-7d9f4c** — proposal written: $DEMO/.warden/proposals/f3cbc43b9ebf.md
-  - file: `$DEMO/.warden/proposals/f3cbc43b9ebf.md`
+- ✅ **CrashLoopBackOff: shop, container api (7 restarts)** — proposal written: $DEMO/.warden/proposals/8c1f6321e354.md
+  - file: `$DEMO/.warden/proposals/8c1f6321e354.md`
+- ✅ **Job failed (BackoffLimitExceeded): shop/refresh-29885592 of CronJob/refresh** — proposal written: $DEMO/.warden/proposals/bd33a83d7878.md
+  - file: `$DEMO/.warden/proposals/bd33a83d7878.md`
+- ✅ **BackOff: shop/Pod/api-7d9f4c** ×2 — proposal written: $DEMO/.warden/proposals/8c4cc5593008.md
+  - file: `$DEMO/.warden/proposals/8c4cc5593008.md`
+- ✅ **FailedMount: shop/Pod/api-7d9f4c** — proposal written: $DEMO/.warden/proposals/a25f367786c2.md
+  - file: `$DEMO/.warden/proposals/a25f367786c2.md`
 
 ## Under the hood
 
-- components in the inventory: 2
+- components in the inventory: 4
 - act apply: report-only — needs the k8s.apply grant (grants in warden.toml)
 - mcp server kubernetes: refused — not in warden.lock — run `warden add mcp:io.github.containers/kubernetes-mcp-server@0.0.67`
 - feed https://kubernetes.io/feed.xml: first look, 50 items as the baseline
 - state: `$DEMO/.warden` · next tick in 6h
 == a proposal
-# BackOff: Pod/api-7d9f4c
+# CrashLoopBackOff: shop, container api (7 restarts)
 
-- finding: `9cc2308096b5` (incident, medium)
-- subject: Pod/api-7d9f4c
-- step: warnings
-- written: 2026-10-27T19:22:18Z
+- finding: `8c1f6321e354` (incident, high)
+- subject: api
+- step: crashloops
+- written: 2026-10-27T21:55:53Z
 
 ## Detail
 
-Back-off restarting failed container api in pod api-7d9f4c
+back-off 5m0s restarting failed container=api
 
 ## Data
 
-- message: Back-off restarting failed container api in pod api-7d9f4c
-- reason: BackOff
-- type: Warning
+- name: api
 
 Nothing was changed. To act on it: apply the proposed fix yourself, or grant the domain's apply action (see its floors) and approve it when Warden asks.
 DEMO=$DEMO

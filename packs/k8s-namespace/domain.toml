@@ -1,10 +1,15 @@
-# One Kubernetes namespace. Read-only by default: warnings and crash loops
-# become findings, container images become inventory (news, advisories), a
-# fix is a proposed manifest + diff for the human. Applying needs the
-# "k8s.apply" grant and is always asked.
+# One Kubernetes namespace, or a project's several. Read-only by default:
+# warnings, crash loops and failed Jobs (CronJobs included) become findings,
+# container images and Helm charts become inventory (news, advisories), a fix
+# is a proposed manifest + diff for the human. Applying needs the "k8s.apply"
+# grant and is always asked.
+#
+# namespaces: a project's namespaces ("shop shop-db", comma or space separated);
+# empty = just {namespace}. Every step runs per namespace, so a Role in each is
+# enough (no cluster-wide list).
 name        = "k8s-namespace"
-description = "A Kubernetes namespace: warnings, crash loops, images; proposes manifests, applies only with a grant"
-params      = { namespace = "default", context = "" }
+description = "Kubernetes namespaces: warnings, crash loops, failed Jobs, images, Helm charts; proposes manifests, applies only with a grant"
+params      = { namespace = "default", namespaces = "", context = "" }
 extensions  = ["mcp:io.github.containers/kubernetes-mcp-server@0.0.67"]   # the brain's read-only cluster tools
 
 [mcp.kubernetes]                   # from the MCP Registry (pinned in warden.lock); read-only
@@ -16,24 +21,60 @@ net      = ["*"]                   # the API server's host is the kubeconfig's: 
 
 [[observe]]
 name     = "warnings"
+foreach  = { namespace = "{namespaces}" }
 run      = { cmd = ["kubectl", "--context={context}", "get", "events", "-n", "{namespace}", "-o", "json"] }
-map      = { items = "items[]", where = { type = "Warning" }, key = "{involvedObject.kind}/{involvedObject.name}/{reason}", title = "{reason}: {involvedObject.kind}/{involvedObject.name}", detail = "{message}", subject = "{involvedObject.kind}/{involvedObject.name}" }
+map      = { items = "items[]", where = { type = "Warning" }, key = "{namespace}/{involvedObject.kind}/{involvedObject.name}/{reason}", title = "{reason}: {namespace}/{involvedObject.kind}/{involvedObject.name}", detail = "{message}", subject = "{involvedObject.kind}/{involvedObject.name}" }
 kind     = "incident"
 severity = "medium"
 fix      = "propose"
 
 [[observe]]
 name     = "crashloops"
+foreach  = { namespace = "{namespaces}" }
 run      = { cmd = ["kubectl", "--context={context}", "get", "pods", "-n", "{namespace}", "-o", "json"] }
-map      = { items = "items[].status.containerStatuses[]", where = { "state.waiting.reason" = "CrashLoopBackOff" }, key = "{name}", title = "CrashLoopBackOff: container {name} ({restartCount} restarts)", detail = "{state.waiting.message}", subject = "{name}" }
+map      = { items = "items[].status.containerStatuses[]", where = { "state.waiting.reason" = "CrashLoopBackOff" }, key = "{namespace}/{name}", title = "CrashLoopBackOff: {namespace}, container {name} ({restartCount} restarts)", detail = "{state.waiting.message}", subject = "{name}" }
 kind     = "incident"
 severity = "high"
 fix      = "propose"
 
+# A failed Job stays until its history limit drops it, so a CronJob that fails
+# every hour is one finding (keyed by the CronJob), counted, not one per run.
+[[observe]]
+name     = "failed-jobs"
+foreach  = { namespace = "{namespaces}" }
+run      = { cmd = ["kubectl", "--context={context}", "get", "jobs", "-n", "{namespace}", "-o", 'jsonpath={range .items[*]}{.metadata.name}{"\t"}{.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}{"\t"}{.status.conditions[?(@.type=="Failed")].reason}{"\t"}{.status.conditions[?(@.type=="Failed")].message}{"\n"}{end}'] }
+map      = { lines = '^(?P<job>[^\t]+)\t(?P<owner>[^\t]*)\t(?P<reason>[^\t]+)\t(?P<message>.*)$', key = "{namespace}/{owner}/{reason}", title = "Job failed ({reason}): {namespace}/{job} of {owner}", detail = "{message}", subject = "{owner}" }
+kind     = "incident"
+severity = "high"
+fix      = "propose"
+
+# Images from the pods that run now, their init containers, and the CronJobs'
+# templates (a CronJob's image is in no pod between runs).
 [[inventory]]
-name = "images"
-run  = { cmd = ["kubectl", "--context={context}", "get", "pods", "-n", "{namespace}", "-o", "json"] }
-map  = { items = "items[].spec.containers[]", component = "{image}", ecosystem = "OCI" }
+name    = "images"
+foreach = { namespace = "{namespaces}" }
+run     = { cmd = ["kubectl", "--context={context}", "get", "pods", "-n", "{namespace}", "-o", "json"] }
+map     = { items = "items[].spec.containers[]", component = "{image}", ecosystem = "OCI" }
+
+[[inventory]]
+name    = "init-images"
+foreach = { namespace = "{namespaces}" }
+run     = { cmd = ["kubectl", "--context={context}", "get", "pods", "-n", "{namespace}", "-o", "json"] }
+map     = { items = "items[].spec.initContainers[]", component = "{image}", ecosystem = "OCI" }
+
+[[inventory]]
+name    = "cronjob-images"
+foreach = { namespace = "{namespaces}" }
+run     = { cmd = ["kubectl", "--context={context}", "get", "cronjobs", "-n", "{namespace}", "-o", "json"] }
+map     = { items = "items[].spec.jobTemplate.spec.template.spec.containers[]", component = "{image}", ecosystem = "OCI" }
+
+# Helm charts from the standard helm.sh/chart label ("coder-2.16.1"): the
+# release Secrets are not readable with "view", the labels are.
+[[inventory]]
+name    = "helm-charts"
+foreach = { namespace = "{namespaces}" }
+run     = { cmd = ["kubectl", "--context={context}", "get", "deployments,statefulsets,daemonsets", "-n", "{namespace}", "-o", 'jsonpath={range .items[*]}{.metadata.labels.helm\.sh/chart}{"\n"}{end}'] }
+map     = { lines = '^(?P<chart>[A-Za-z0-9][A-Za-z0-9_.-]*?)-(?P<version>v?[0-9]+\.[0-9]+\.[0-9]+\S*)$', component = "{chart}", version = "{version}", ecosystem = "Helm" }
 
 [feeds]
 rss = ["https://kubernetes.io/feed.xml"]

@@ -48,6 +48,29 @@ type Step struct {
 	Kind      string        `toml:"kind"`     // the finding kind an observe step reports (default: its name)
 	Severity  string        `toml:"severity"` // default severity of its findings
 	Fix       string        `toml:"fix"`      // the act its findings propose (observe steps)
+	// Foreach: run the step once per value of a list, e.g. { namespace = "{namespaces}" }:
+	// the list (comma or space separated, after params) binds the one key in turn.
+	// An empty list runs the step once with the params as they are.
+	Foreach map[string]string `toml:"foreach"`
+}
+
+// Each: the param sets a step runs with (one per foreach value), and the
+// bound values for each (to stamp on what that run produced).
+func (s Step) Each(params map[string]string) (sets []map[string]string, bound []map[string]string) {
+	for k, list := range s.Foreach {
+		for _, v := range strings.FieldsFunc(expand(list, params), func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+			ps := make(map[string]string, len(params)+1)
+			for pk, pv := range params {
+				ps[pk] = pv
+			}
+			ps[k] = v
+			sets, bound = append(sets, ps), append(bound, map[string]string{k: v})
+		}
+	}
+	if len(sets) == 0 {
+		return []map[string]string{params}, []map[string]string{nil}
+	}
+	return sets, bound
 }
 
 // Run: exactly one of Cmd, MCP+Tool, Builtin.
@@ -146,8 +169,11 @@ func (d *Domain) validate() error {
 	for _, s := range d.Act {
 		acts[s.Name] = true
 	}
-	for _, group := range [][]Step{d.Pause, d.Observe, d.Inventory, d.Act, d.Check} {
+	for gi, group := range [][]Step{d.Pause, d.Observe, d.Inventory, d.Act, d.Check} {
 		for _, s := range group {
+			if len(s.Foreach) > 0 && (len(s.Foreach) > 1 || (gi != 1 && gi != 2) || s.Run.Builtin != "" || s.Interpret) {
+				return fmt.Errorf("step %s: foreach binds one key, on an observe or inventory step that runs a cmd or an mcp tool", s.Name)
+			}
 			n := 0
 			if len(s.Run.Cmd) > 0 {
 				n++

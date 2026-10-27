@@ -139,3 +139,53 @@ func TestLinuxServerMaps(t *testing.T) {
 		t.Fatal(cs, err)
 	}
 }
+
+func TestK8sNamespaceForeachAndMaps(t *testing.T) {
+	d, err := Load(filepath.Join("..", "..", "packs", "k8s-namespace"), map[string]string{"namespace": "shop", "namespaces": "shop, shop-db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobs, charts Step
+	for _, s := range d.Observe {
+		if s.Name == "failed-jobs" {
+			jobs = s
+		}
+	}
+	for _, s := range d.Inventory {
+		if s.Name == "helm-charts" {
+			charts = s
+		}
+	}
+	sets, bound := jobs.Each(d.Params)
+	if len(sets) != 2 || sets[1]["namespace"] != "shop-db" || bound[0]["namespace"] != "shop" || sets[0]["context"] != "" {
+		t.Fatal(sets, bound)
+	}
+	if a := Expand(jobs.Run.Cmd, sets[1]); a[5] != "shop-db" || !strings.Contains(a[7], `{"\t"}`) {
+		t.Fatal(a)
+	}
+	// kubectl's jsonpath output: two failed runs of one CronJob, one that completed, one bare Job
+	out := "refresh-29885592\tCronJob/refresh\tBackoffLimitExceeded\tJob has reached the specified backoff limit\n" +
+		"refresh-29885596\tCronJob/refresh\tBackoffLimitExceeded\tJob has reached the specified backoff limit\n" +
+		"backup-29885000\tCronJob/backup\t\t\n" +
+		"probe\t/\tDeadlineExceeded\tJob was active longer than specified deadline\n"
+	fs, err := jobs.Map.Findings([]byte(out), jobs, sets[1])
+	if err != nil || len(fs) != 2 || fs[0].Count != 2 || fs[0].Key != "shop-db/CronJob/refresh/BackoffLimitExceeded" ||
+		fs[0].Title != "Job failed (BackoffLimitExceeded): shop-db/refresh-29885592 of CronJob/refresh" || fs[1].Subject != "/" {
+		t.Fatal(fs, err)
+	}
+	cs, err := charts.Map.Components([]byte("coder-2.16.1\n\nkube-prometheus-stack-62.3.0\ncoder-2.16.1\nprefect-server-2026.3.19205444\n"), sets[0])
+	if err != nil || len(cs) != 3 || cs[0].Name != "coder" || cs[0].Version != "2.16.1" || cs[0].Ecosystem != "Helm" ||
+		cs[1].Name != "kube-prometheus-stack" || cs[2].Version != "2026.3.19205444" {
+		t.Fatal(cs, err)
+	}
+	// no namespaces: one run with {namespace} as it is
+	d1, _ := Load(filepath.Join("..", "..", "packs", "k8s-namespace"), map[string]string{"namespace": "shop"})
+	if sets, bound := d1.Observe[0].Each(d1.Params); len(sets) != 1 || sets[0]["namespace"] != "shop" || bound[0] != nil {
+		t.Fatal(sets, bound)
+	}
+	write := filepath.Join(t.TempDir(), "domain.toml")
+	os.WriteFile(write, []byte("name = \"x\"\n[[act]]\nname = \"a\"\nforeach = { n = \"{ns}\" }\nrun = { cmd = [\"true\"] }\n"), 0o644)
+	if _, err := Load(filepath.Dir(write), nil); err == nil {
+		t.Fatal("foreach on an act must be refused")
+	}
+}

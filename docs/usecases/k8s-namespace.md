@@ -3,10 +3,14 @@
 **Pack:** `packs/k8s-namespace` · **Demo:** `scripts/demo-k8s.sh` → `examples/demo-k8s.txt` (fixture: a fake
 `kubectl` prints recorded JSON; no cluster is contacted)
 
-Warden guards one namespace, read-only by default:
+Warden guards one namespace, or a project's several, read-only by default:
 
-- `Warning` events and `CrashLoopBackOff` containers become incidents;
-- container images become the inventory (news and advisories are matched against it);
+- `Warning` events, `CrashLoopBackOff` containers and failed Jobs become incidents. A CronJob that fails every hour
+  is one finding keyed by the CronJob and counted, not a new one per run. A failed Job stays until the CronJob's
+  `failedJobsHistoryLimit` drops it, so a CronJob that has recovered can still show its last failure;
+- container images (running pods, init containers, CronJob templates) and Helm charts (from the standard
+  `helm.sh/chart` label, since release Secrets are not readable with `view`) become the inventory, and news and
+  advisories are matched against it;
 - the fix is a **proposal** file (with the brain's root-cause analysis when a brain is configured);
 - `kubectl apply` exists as an act but needs the `k8s.apply` grant and is always asked;
 - the brain gets the read-only tools of `io.github.containers/kubernetes-mcp-server`, pinned from the MCP Registry in
@@ -23,6 +27,15 @@ mode    = "act"
 wake    = { every = "15m", listen = false }
 grants  = []                                    # add "k8s.apply" only if Warden may apply (always asked)
 rules   = [{ act = "propose", then = "auto" }]  # writing a proposal file is harmless
+```
+
+A project with several namespaces is one Warden: list them in `namespaces` (comma or space separated). Every step
+runs once per namespace (the pack's `foreach = { namespace = "{namespaces}" }`). Findings carry their namespace, so
+`apply` runs in the right one, and the ServiceAccount only needs `view` in each namespace, never a cluster-wide
+list:
+
+```toml
+params = { context = "", namespace = "shop", namespaces = "shop shop-db shop-static" }
 ```
 
 To get events as they happen instead of every 15 minutes, add a stream and run `warden listen`:

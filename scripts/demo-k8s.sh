@@ -31,6 +31,9 @@ cat > "$DEMO/bin/kubectl" <<SH
 case "\$*" in
 *" events "*) cat $DEMO/fixtures/events.json ;;
 *" pods "*) cat $DEMO/fixtures/pods.json ;;
+*" jobs "*) printf 'refresh-29885592\tCronJob/refresh\tBackoffLimitExceeded\tJob has reached the specified backoff limit\n' ;;
+*" cronjobs "*) echo '{"items":[{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"containers":[{"name":"refresh","image":"python:3.12-slim"}]}}}}}}]}' ;;
+*" deployments,statefulsets,daemonsets "*) echo shop-api-1.4.2 ;;
 *" ns "*) echo namespace/shop ;;
 *) echo "fixture kubectl: refusing \$*" >&2; exit 1 ;;
 esac

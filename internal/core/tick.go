@@ -241,13 +241,35 @@ func (in *Instance) observeSteps(ctx context.Context, t *Tick, steps []domain.St
 			with := domain.ExpandArgs(s.Run.With, in.Dom.Params)
 			fs, err = builtin.Observe(ctx, s.Run.Builtin, with, in.env(with))
 		} else {
-			var raw []byte
-			if raw, err = in.raw(ctx, s, in.Dom.Params); err == nil {
-				if s.Interpret {
-					fs, err = in.interpret(ctx, s, raw)
-				} else {
-					fs, err = s.Map.Findings(raw, s, in.Dom.Params)
+			sets, bound := s.Each(in.Dom.Params)
+			for i, params := range sets {
+				var got []domain.Finding
+				raw, rerr := in.raw(ctx, s, params)
+				if rerr == nil {
+					if s.Interpret {
+						got, rerr = in.interpret(ctx, s, raw)
+					} else {
+						got, rerr = s.Map.Findings(raw, s, params)
+					}
 				}
+				if rerr != nil {
+					err = errors.Join(err, rerr)
+				}
+				for j := range got { // what this run saw belongs to its value (an act on it gets e.g. its namespace)
+					for k, v := range bound[i] {
+						if got[j].Data == nil {
+							got[j].Data = map[string]string{}
+						}
+						got[j].Data[k] = v
+						if got[j].Fix != nil {
+							if got[j].Fix.Params == nil {
+								got[j].Fix.Params = map[string]string{}
+							}
+							got[j].Fix.Params[k] = v
+						}
+					}
+				}
+				fs = append(fs, got...)
 			}
 		}
 		if err != nil {
@@ -297,9 +319,22 @@ func (in *Instance) inventory(ctx context.Context, t *Tick) []domain.Component {
 			with := domain.ExpandArgs(s.Run.With, in.Dom.Params)
 			cs, err = builtin.Inventory(ctx, s.Run.Builtin, with, in.env(with))
 		} else {
-			var raw []byte
-			if raw, err = in.raw(ctx, s, in.Dom.Params); err == nil {
-				cs, err = s.Map.Components(raw, in.Dom.Params)
+			sets, bound := s.Each(in.Dom.Params)
+			for i, params := range sets {
+				raw, rerr := in.raw(ctx, s, params)
+				var got []domain.Component
+				if rerr == nil {
+					got, rerr = s.Map.Components(raw, params)
+				}
+				if rerr != nil {
+					err = errors.Join(err, rerr)
+				}
+				for j := range got {
+					for _, v := range bound[i] {
+						got[j].Where = or(got[j].Where, v)
+					}
+				}
+				cs = append(cs, got...)
 			}
 		}
 		if err != nil {
