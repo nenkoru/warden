@@ -238,6 +238,7 @@ type PR struct {
 	Merged            bool       `json:"merged"`
 	MergedAt          *time.Time `json:"merged_at"`
 	MergeCommitSHA    string     `json:"merge_commit_sha"`
+	MergedBy          *User      `json:"merged_by"` // only in a single PR's GET, not in lists
 }
 
 func (p PR) Has(label string) bool { return hasLabel(p.Labels, label) }
@@ -440,6 +441,23 @@ func (c *Client) CommitDate(ctx context.Context, sha string) (time.Time, error) 
 	return r.Commit.Committer.Date, err
 }
 
+// Parents: a commit's parent commits.
+func (c *Client) Parents(ctx context.Context, sha string) ([]string, error) {
+	var r struct {
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	if err := c.do(ctx, "GET", c.repoPath("/commits/%s", url.PathEscape(sha)), nil, &r); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(r.Parents))
+	for _, p := range r.Parents {
+		out = append(out, p.SHA)
+	}
+	return out, nil
+}
+
 // FileExists: whether path exists at ref (the contents API).
 func (c *Client) FileExists(ctx context.Context, path, ref string) (bool, error) {
 	err := c.do(ctx, "GET", c.repoPath("/contents/%s?ref=%s", path, url.QueryEscape(ref)), nil, nil)
@@ -593,6 +611,26 @@ func (c *Client) FailedLogs(ctx context.Context, sha string, max int) (string, e
 		}
 	}
 	return b.String(), nil
+}
+
+// FailedJobs: the names of a workflow run's failed (or timed-out) jobs.
+func (c *Client) FailedJobs(ctx context.Context, runID int64) ([]string, error) {
+	var jobs struct {
+		Jobs []struct {
+			Name       string `json:"name"`
+			Conclusion string `json:"conclusion"`
+		} `json:"jobs"`
+	}
+	if err := c.do(ctx, "GET", c.repoPath("/actions/runs/%d/jobs?per_page=100", runID), nil, &jobs); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, j := range jobs.Jobs {
+		if j.Conclusion == "failure" || j.Conclusion == "timed_out" {
+			out = append(out, j.Name)
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) CreateIssue(ctx context.Context, title, body string, labels ...string) (Issue, error) {

@@ -19,7 +19,8 @@ api         = "https://api.github.com"
 branch      = "main"
 checks_mode = "ci"                       # ci: no repository code runs here, CI decides; local: run `checks` in the sandbox
 checks      = '["go vet ./...", "go test -race -count=1 ./...", "GOLANGCI_LINT_CACHE=$TMPDIR/golangci golangci-lint run ./..."]'
-required_checks    = ""                  # check names that must be present and green (default: every reported check green)
+required_checks    = ""                  # check names that must be present and green (default: every reported check green). Warden merges with no human review,
+                                         # so list the quality gates too: at least "coverage" and "fuzz" (and lint, test (…), govulncheck, demos (…))
 protected          = '[".github/**", ".goreleaser.yaml", ".goreleaser.yml", "SECURITY.md", "LICENSE", "NOTICE", "packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"]'
 protected_names    = "secret,token,credential,signing,signature,cosign,gpg" # any file whose name contains one of these
 max_issues_per_day = "3"
@@ -31,6 +32,7 @@ delegate_labels    = ""                  # label → agent, e.g. { infra = "Ops"
 delegate_default   = ""                  # the agent for hard issues when no paid brain may take them
 pickup_branches    = ""                  # branch prefixes a delegate pushes to; Warden opens the PR
 pause_label        = "warden-pause"
+review_brain       = ""                  # a brain name: a second model reviews Warden's own issue PRs before merge-pr merges them ("" = off)
 
 # The kill switch, checked first every tick: any finding → this tick only
 # observes and reports; every act is refused.
@@ -47,7 +49,7 @@ name = "prs"                             # open PRs → merge-pr (own, Dependabo
 run  = { builtin = "github-prs" }
 
 [[observe]]
-name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow
+name = "main"                            # CI on main (red → "check", high; revert-pr when Warden's merge broke it), unreleased merged PRs → release, the release workflow
 run  = { builtin = "github-main" }
 
 [[act]]
@@ -79,3 +81,8 @@ floors = { max_per_day = 5 }
 name   = "pickup-branch"                 # a delegate's pushed branch becomes a PR under the merge rules
 run    = { builtin = "pickup-branch" }
 floors = { untrusted = "deny", max_per_day = 5 }
+
+[[act]]
+name   = "revert-pr"                     # main red right after a merge of Warden's (main green on its parent): warden/revert-<sha>, a PR "Revert …", merged on green
+run    = { builtin = "revert-pr" }
+floors = { untrusted = "deny", max_per_day = 3 }

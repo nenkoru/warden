@@ -41,6 +41,8 @@ func actGitHub(ctx context.Context, name string, f domain.Finding, env *Env) Res
 		r = delegate(ctx, c, f, env)
 	case "pickup-branch":
 		r = pickupBranch(ctx, c, f, env)
+	case "revert-pr":
+		r = revertPR(ctx, c, f, env)
 	}
 	// nothing that leaves an act carries the token
 	r.Summary = c.Redact(r.Summary)
@@ -517,6 +519,10 @@ func mergePR(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if why, err := pausedNow(ctx, c, env); why != "" || err != nil {
 		return refused("refused: paused by the owner: " + why)
 	}
+	review, stop := secondReview(ctx, c, env, pr, class)
+	if stop {
+		return review
+	}
 	if pr.Draft {
 		if err := c.MarkReady(ctx, pr.NodeID); err != nil {
 			return Result{Summary: "merge-pr: mark ready: " + err.Error()}
@@ -535,7 +541,11 @@ func mergePR(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if err != nil {
 		return Result{Summary: "merge-pr: " + err.Error()}
 	}
-	return Result{OK: true, Summary: fmt.Sprintf("merged PR #%d (%s, squash) → %s", n, class, short7(sha))}
+	res := Result{OK: true, Summary: fmt.Sprintf("merged PR #%d (%s, squash) → %s", n, class, short7(sha))}
+	if review.Summary != "" {
+		res.Summary += "; " + review.Summary
+	}
+	return res
 }
 
 // ---- release

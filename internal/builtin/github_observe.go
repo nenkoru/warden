@@ -317,6 +317,13 @@ func mainState(ctx context.Context, c *github.Client, env *Env) (sha, state stri
 	if err != nil {
 		return sha, "", nil, err
 	}
+	state, red = runsState(runs, sha)
+	return sha, state, red, nil
+}
+
+// runsState: CI on sha from a branch's workflow runs (the latest run of each
+// workflow; pull_request runs don't count) and the red ones.
+func runsState(runs []github.WorkflowRun, sha string) (state string, red []github.WorkflowRun) {
 	latest := map[string]github.WorkflowRun{}
 	for _, r := range runs {
 		if r.HeadSHA != sha || r.Event == "pull_request" {
@@ -350,7 +357,7 @@ func mainState(ctx context.Context, c *github.Client, env *Env) (sha, state stri
 	case pending:
 		state = "pending"
 	}
-	return sha, state, red, nil
+	return state, red
 }
 
 var reVersionTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -473,6 +480,13 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 			"No release while main is red.")
 		f.Links = links
 		f.Data = map[string]string{"sha": sha}
+		if pr, err := revertable(ctx, c, env, sha, red); err != nil {
+			f.Detail += " Whether to revert could not be checked: " + c.Redact(err.Error())
+		} else if pr != nil {
+			f.Detail += fmt.Sprintf(" Warden merged PR #%d as this commit and main was green before it: it reverts it.", pr.Number)
+			f.Fix = &domain.Fix{Act: "revert-pr", Target: "#" + strconv.Itoa(pr.Number), What: fmt.Sprintf("revert PR #%d (main went red after Warden merged it)", pr.Number),
+				Params: map[string]string{"pr": strconv.Itoa(pr.Number), "sha": sha, "tainted": "false"}}
+		}
 		out = append(out, f)
 	}
 	if param(nil, env, "release", "auto") == "off" {

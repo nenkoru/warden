@@ -1,9 +1,9 @@
 // Package githubtest is an in-memory fake of the parts of the GitHub REST
 // API Warden uses, for offline tests: issues, labels, comments, pull
 // requests (files, diff, reviews, merge), check runs and statuses, workflow
-// runs, jobs and logs, refs, tags, branches, comparisons, contents and two GraphQL
-// mutations. Every request must carry the token; every request body is kept
-// so a test can assert the token never left in one.
+// runs, jobs and logs, commits (dates, parents), refs, tags, branches, comparisons,
+// contents and two GraphQL mutations. Every request must carry the token;
+// every request body is kept so a test can assert the token never left in one.
 package githubtest
 
 import (
@@ -57,6 +57,7 @@ type Fake struct {
 	Jobs     map[int64][]Job
 	Tags     []github.Tag
 	Dates    map[string]time.Time // commit sha → date
+	Parents  map[string][]string  // commit sha → parent shas
 	Branches map[string]string    // name → sha
 	Files    map[string]bool      // paths present on main (PAUSE)
 	Comments map[int][]string
@@ -80,7 +81,7 @@ type Fake struct {
 func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
-		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
+		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Parents: map[string][]string{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
 		Comments: map[int][]string{}, Refs: map[string]string{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
@@ -351,6 +352,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			now := f.Now
 			p.State, p.Merged, p.MergedAt, p.MergeCommitSHA = "closed", true, &now, "m"+strconv.Itoa(n)
+			p.MergedBy = &github.User{Login: f.Login}
 			f.Merged = append(f.Merged, n)
 			f.Branches["main"] = p.MergeCommitSHA
 			js(map[string]any{"merged": true, "sha": p.MergeCommitSHA})
@@ -371,7 +373,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			js(map[string]any{"state": st, "total_count": n})
 		default:
 			d := f.Dates[m[1]]
-			js(map[string]any{"sha": m[1], "commit": map[string]any{"committer": map[string]any{"date": d}}})
+			parents := []map[string]string{}
+			for _, p := range f.Parents[m[1]] {
+				parents = append(parents, map[string]string{"sha": p})
+			}
+			js(map[string]any{"sha": m[1], "commit": map[string]any{"committer": map[string]any{"date": d}}, "parents": parents})
 		}
 	case path == "/actions/runs":
 		var out []github.WorkflowRun

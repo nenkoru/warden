@@ -3,7 +3,7 @@ package builtin
 // The github-repo pack's built-ins: observers of one repository (issues,
 // PRs, main's CI and release state, the owner's kill switch) and the acts
 // that maintain it (work-issue, review-pr, merge-pr, release, delegate,
-// pickup-branch), plus github-note for the owner's notifications.
+// pickup-branch, revert-pr), plus github-note for the owner's notifications.
 //
 // Everything an outsider can write (issue and PR titles, bodies, comments,
 // external code) is data: fenced as untrusted wherever it reaches a model,
