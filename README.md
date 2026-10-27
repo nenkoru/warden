@@ -56,7 +56,7 @@ one decline pins it to ask.
 A report looks like this (from `scripts/demo-go-project.sh`, real OSV and Go proxy, no model):
 
 ```markdown
-# Warden «greet» · 2026-10-27 19:22
+# Warden «greet» · 2026-10-27 19:22 · warden 0.2.0
 
 Domain: **go-project** (`$DEMO/greet`) · mode: **act** · triage v1 · sandbox: sandbox-exec
 

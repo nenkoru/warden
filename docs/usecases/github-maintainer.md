@@ -94,15 +94,19 @@ stay red; other issues go to the paid brain, and with none available they are **
 a blocked region) marks that brain unavailable for a few hours: one report line, no retries. Acts that need no brain —
 merging green PRs, release PRs (the CHANGELOG is generated without a model), the digest — run off-hours too.
 
-## Notifications without new credentials
+## Notifications without new credentials: the digest issue
 
-`warden github-note` is a hook command that comments on a pinned issue "Warden log" with the same token:
+`warden github-note` is a hook command that comments on one pinned issue, **"Warden digest"** (label
+`warden-digest`, opened by the token's user on first use), with the same token. The comments that matter mention
+the owner (`params.owner`), so **GitHub itself emails them** — no SMTP, no other service. On the repository page set
+**Watch → Custom → Releases + Mentions** (and keep email on for participating and @mentions in your notification
+settings); you then get mail for each mention below and for each published release.
 
 ```toml
-digest = "daily"     # a Digest event once a day with the day's summary
+digest = "daily"     # a Digest event once a day with the day before
 [[hooks]]
-event   = "Report"   # a comment mentioning the owner only for: security findings, red main, a failed release,
-command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Report"]   # budget alerts, anything waiting
+event   = "Report"   # a comment only when something is urgent (below); the rest waits for the digest
+command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Report"]
 [[hooks]]
 event   = "Digest"
 command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Digest"]
@@ -111,7 +115,21 @@ event   = "Ask"
 command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Ask"]
 ```
 
-Mentions inside the payload (issue titles) are defused; the only mention is the owner's.
+- **The daily digest**: one comment a day (never two for the same day: a `<!-- warden-digest DAY -->` marker on the
+  token user's comments) with the model spend of the day against the cap, the counts (✅ done, ⛔ failed, ❓ waiting),
+  **Needs you** (open asks with their `warden approve` line, and every open issue and PR labeled `needs-human`, linked),
+  extra sections other parts of Warden add, then the day's lines.
+- **Release notes**: when Warden tags a release, and when a release is published (by Warden's tag or by you), the
+  CHANGELOG.md section of that version, once per version. Only once the digest issue exists.
+- **Immediate pings**, only for: security findings (kind `security`/`vuln`, or marked security), a failed release
+  (the release workflow failed, or the release act failed) or a rollback, budget alerts, and anything waiting for you
+  (an ask, a PR labeled `needs-human`). Everything else the report has for you (a red main, a failed work-issue,
+  other high findings) goes into the next digest, without a comment. The backoff (`[backoff]`) still applies.
+- Every comment ends with `<sub>… · warden VERSION</sub>`; the report header says `warden VERSION` too.
+
+Text in the comments that comes from outside (issue and PR titles, the CHANGELOG built from them) is defused: the
+only mention is the owner's. An older "Warden log" issue (label `warden-log`) stays as it is — Warden can't edit or
+close issues — and gets no more comments; close it yourself.
 
 ## An instance
 
@@ -153,7 +171,7 @@ Start with `mode = "dry-run"` for a day and read the reports.
    limit — the outer backstop behind Warden's own daily cap.
 3. **A branch protection rule or ruleset on `main`**: require a pull request, require the CI status checks, block
    force pushes and deletions. Warden's merges then go through the same gate as everyone's.
-4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `warden-log` (GitHub
+4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `warden-digest` (GitHub
    creates missing labels when Warden adds them).
 
 ## Deploy on Kubernetes

@@ -1,7 +1,7 @@
 // Package githubtest is an in-memory fake of the parts of the GitHub REST
 // API Warden uses, for offline tests: issues, labels, comments, pull
 // requests (files, diff, reviews, merge), check runs and statuses, workflow
-// runs, jobs and logs, refs, tags, branches, contents and two GraphQL
+// runs, jobs and logs, refs, tags, branches, contents, releases and two GraphQL
 // mutations. Every request must carry the token; every request body is kept
 // so a test can assert the token never left in one.
 package githubtest
@@ -59,6 +59,8 @@ type Fake struct {
 	Dates    map[string]time.Time // commit sha → date
 	Branches map[string]string    // name → sha
 	Files    map[string]bool      // paths present on main (PAUSE)
+	Contents map[string]string    // "ref:path" → the file's text (the contents API, raw)
+	Releases []github.Release     // published releases, newest last
 	Comments map[int][]string
 	Reviews  []Review
 	Merged   []int
@@ -77,7 +79,7 @@ type Fake struct {
 func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
-		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
+		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{}, Contents: map[string]string{},
 		Comments: map[int][]string{}, Refs: map[string]string{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
@@ -251,8 +253,8 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			js(map[string]any{"id": len(f.Comments[n])})
 		case m[2] == "comments":
 			var out []github.Comment
-			for i, c := range f.Comments[n] {
-				out = append(out, github.Comment{ID: int64(i + 1), Body: c})
+			for i, c := range f.Comments[n] { // every comment is the token's own (since= is not applied)
+				out = append(out, github.Comment{ID: int64(i + 1), Body: c, User: github.User{Login: f.Login}})
 			}
 			js(out)
 		case m[2] == "labels":
@@ -430,6 +432,22 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			out = append(out, b)
 		}
 		js(out)
+	case path == "/releases/latest":
+		for i := len(f.Releases) - 1; i >= 0; i-- {
+			if rl := f.Releases[i]; !rl.Draft && !rl.Prerelease {
+				js(rl)
+				return
+			}
+		}
+		w.WriteHeader(404)
+		js(map[string]string{"message": "Not Found"})
+	case strings.HasPrefix(path, "/contents/") && strings.Contains(r.Header.Get("Accept"), "raw"):
+		if c, ok := f.Contents[qv.Get("ref")+":"+strings.TrimPrefix(path, "/contents/")]; ok {
+			_, _ = io.WriteString(w, c)
+			return
+		}
+		w.WriteHeader(404)
+		js(map[string]string{"message": "Not Found"})
 	case strings.HasPrefix(path, "/contents/"):
 		if f.Files[strings.TrimPrefix(path, "/contents/")] {
 			js(map[string]string{"type": "file"})

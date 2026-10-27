@@ -79,11 +79,12 @@ type Result struct {
 	Deferred bool `json:"-"`
 }
 
-// DigestState: the day's lines for the daily digest (digest.go).
+// DigestState: the day's lines for the daily digest (pause.go).
 type DigestState struct {
 	Day   string   `json:"day,omitempty"`
 	Lines []string `json:"lines,omitempty"`
 	Spend string   `json:"spend,omitempty"`
+	Extra []string `json:"extra,omitempty"` // lines for the digest's own section (AddDigestExtra)
 }
 
 // Advisory: "versions below Fixed are vulnerable", from a signal.

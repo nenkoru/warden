@@ -13,7 +13,7 @@
 //	warden improve [--candidate FILE] [--agent] | rollback
 //	warden add REF | verify          extensions from registries, pinned in warden.lock
 //	warden units [--listen]          launchd plist / systemd units (written, not loaded)
-//	warden github-note --event E     a hook command: the event JSON on stdin → a comment on the repo's "Warden log" issue
+//	warden github-note --event E     a hook command: the event JSON on stdin → a comment on the repo's "Warden digest" issue
 //
 // Every command takes --config PATH (default ./warden.toml).
 package main

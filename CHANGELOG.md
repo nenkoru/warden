@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   PR's merge commit (`release`), hand-offs to other agents through a templated command (`delegate`,
   `pickup-branch`). Observers `github-issues`, `github-prs`, `github-main`, `github-pause`; a GitHub REST client with
   the token from a file (never in argv, URLs, logs or errors); `warden github-note`, a hook command that comments on a
-  pinned "Warden log" issue. See `docs/usecases/github-maintainer.md` and `deploy/k8s/github-maintainer.yaml`.
+  pinned "Warden digest" issue. See `docs/usecases/github-maintainer.md` and `deploy/k8s/github-maintainer.yaml`.
 - A kill switch for any domain: `[[pause]]` steps run first every tick; a finding (or a pause step that fails) makes
   the tick observe and report only, every act refused.
 - Several brains, routed per task: `[brains.NAME]`, `brain_for = { task = "name" | "auto" }`, `brain_auto`; per-brain
@@ -28,6 +28,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the price table), a Claude Code ACP brain through the meter's local proxy; over the cap no paid model is called and
   brain acts are refused; alerts ping at once; every report header says `model spend today: $X of $Y`.
 - `digest = "daily"`: a `Digest` hook event once a day with the day's summary.
+- The owner's news by email through GitHub itself: `warden github-note` writes to one pinned "Warden digest" issue
+  (label `warden-digest`; an older "Warden log" issue is left alone) — one daily digest per day mentioning the owner
+  (spend against the cap, done/failed/waiting counts, a "Needs you" list of open asks and `needs-human` issues and PRs,
+  extra lines from `AddDigestExtra`, the day's lines), the CHANGELOG section of each new version when Warden tags it
+  or a release is published (once per version), and immediate pings only for security findings, a failed release or
+  a rollback, budget alerts and anything waiting for the owner (the Report payload's new `urgent` list). Watch →
+  Custom → Releases + Mentions gets them by email.
+- The running version everywhere: the report header (`warden VERSION`), the `version` field of the Report, Ask and
+  Digest payloads, and a `<sub>` footer on every github-note comment.
 - Floors `untrusted = "deny"` (a finding carrying untrusted input never drives the act), `needs_brain`, `clean_env`;
   the sandbox can open loopback ports (a local metering proxy) and hide credential files.
 - Instance params accept arrays and tables (passed to packs as JSON).
