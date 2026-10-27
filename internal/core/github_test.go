@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/nenkoru/warden/internal/brain"
+	"github.com/nenkoru/warden/internal/domain"
 	"github.com/nenkoru/warden/internal/github"
 	"github.com/nenkoru/warden/internal/github/githubtest"
 	"github.com/nenkoru/warden/internal/meter"
+	"github.com/nenkoru/warden/internal/version"
 )
 
 const ghSecret = "github_pat_CORESECRET987654321"
@@ -195,7 +197,14 @@ func TestMaintainerRedMainNoReleaseAndPing(t *testing.T) {
 	})
 	ps := m.payloads(t, "Report")
 	if len(ps) != 1 || !strings.Contains(attentionOf(ps[0]), "main is red") {
-		t.Fatalf("red main must ping: %v", ps)
+		t.Fatalf("red main must be told: %v", ps)
+	}
+	if u, _ := json.Marshal(ps[0]["urgent"]); strings.Contains(string(u), "main is red") || ps[0]["version"] != version.Version {
+		t.Fatalf("a red main waits for the digest (urgent %s), the version is told: %v", u, ps[0])
+	}
+	rep, _ := os.ReadFile(filepath.Join(m.cfg.State, "reports", "latest.md"))
+	if first, _, _ := strings.Cut(string(rep), "\n"); !strings.HasSuffix(first, " · warden "+version.Version) {
+		t.Fatalf("report header: %q", first)
 	}
 	noToken(t, m)
 }
@@ -224,7 +233,7 @@ func TestMaintainerBudgetCapRefusesBrainActsAndPings(t *testing.T) {
 		t.Fatalf("work-issue over the cap: %+v", refused)
 	}
 	ps := m.payloads(t, "Report")
-	if len(ps) != 1 || !strings.Contains(attentionOf(ps[0]), "daily cap") {
+	if u, _ := json.Marshal(ps[0]["urgent"]); len(ps) != 1 || !strings.Contains(attentionOf(ps[0]), "daily cap") || !strings.Contains(string(u), "daily cap") {
 		t.Fatalf("the cap must ping: %v", ps)
 	}
 	rep, _ := os.ReadFile(filepath.Join(m.cfg.State, "reports", "latest.md"))
@@ -237,6 +246,8 @@ func TestMaintainerDigestOncePerDay(t *testing.T) {
 	m := newMaint(t, `digest = "daily"`, "")
 	m.fake.AddPR("fix: x", "warden-bot", "x", "own1", []string{"README.md"}, "green")
 	in := open(t, m.cfg)
+	in.AddDigestExtra("27B: 3/5 green")
+	in.AddDigestExtra("27B: 3/5 green")
 	day := time.Date(2026, 10, 27, 10, 0, 0, 0, time.Local)
 	for _, at := range []time.Time{day, day.Add(time.Hour), day.Add(24 * time.Hour), day.Add(26 * time.Hour)} {
 		in.Now = func() time.Time { return at }
@@ -250,6 +261,17 @@ func TestMaintainerDigestOncePerDay(t *testing.T) {
 	ds := m.payloads(t, "Digest")
 	if len(ds) != 1 || ds[0]["day"] != "2026-10-27" || !strings.Contains(fmt.Sprint(ds[0]["lines"]), "merged PR #1") {
 		t.Fatalf("digests: %v", ds)
+	}
+	// the extra lines: the one added (once), then the day's 27B experiment line with a link to the log
+	extra, _ := ds[0]["extra"].([]any)
+	if ds[0]["done"] != 1.0 || ds[0]["failed"] != 0.0 || len(extra) != 2 || extra[0] != "27B: 3/5 green" ||
+		!strings.HasPrefix(fmt.Sprint(extra[1]), "27B experiment 2026-10-27: ") ||
+		!strings.HasSuffix(fmt.Sprint(extra[1]), "[experiment-27b.md](https://github.com/acme/proj/blob/main/docs/experiment-27b.md)") ||
+		ds[0]["version"] != version.Version || !strings.HasPrefix(fmt.Sprint(ds[0]["update"]), "version "+version.Version) {
+		t.Fatalf("digest counts, extra, version: %v", ds[0])
+	}
+	if len(in.St.Digest.Extra) != 0 {
+		t.Fatal("the extra lines go with the digest that told them")
 	}
 }
 
@@ -444,5 +466,40 @@ func TestParamsArraysAndTables(t *testing.T) {
 	if cfg.Params["protected"] != `["a/**","b"]` || cfg.Params["delegate_labels"] != `{"infra":"Ops"}` || cfg.Params["n"] != "3" ||
 		cfg.Params["token_file"] != filepath.Join(cfg.Dir, "tok") {
 		t.Fatalf("%v", cfg.Params)
+	}
+}
+
+// attention: everything for the owner; urgent: only what pings at once.
+func TestAttentionUrgent(t *testing.T) {
+	items := []*Item{
+		{Finding: domain.Finding{Kind: "check", Severity: "high", Title: "main is red"}, Disp: Report, New: true},
+		{Finding: domain.Finding{Kind: "vuln", Severity: "high", Title: "CVE in x"}, Disp: Report, New: true},
+		{Finding: domain.Finding{Kind: "news", Severity: "critical", Title: "tagged", Data: map[string]string{"tags": "release,security"}}, Disp: Report, New: true},
+		{Finding: domain.Finding{Kind: "release", Severity: "critical", Title: "release v1.2.0 failed"}, Disp: Report, New: true},
+		{Finding: domain.Finding{Kind: "rollback", Severity: "medium", Title: "rolled back to 0.2.0"}, Disp: Report, New: true},
+		// the canary gate's failed rc: a rollback finding whose act told the owner (OK) still pings
+		{Finding: domain.Finding{Kind: "rollback", Severity: "high", Title: "release v0.2.0-rc.1 failed on the canary", Fix: &domain.Fix{Act: "release"}},
+			Disp: Report, New: true, Result: &Result{OK: true, Summary: "issue #12 for the owner"}},
+		{Finding: domain.Finding{Kind: "budget", Severity: "high", Title: "80% of the cap"}, Disp: Report, New: true},
+		{Finding: domain.Finding{Kind: "pr", Severity: "high", Title: "PR #4 waits", Data: map[string]string{"waiting": "owner"}}, Disp: Report, New: true},
+		{Finding: domain.Finding{Kind: "issue", Title: "merge it?"}, Pending: "a1", New: true},
+		{Finding: domain.Finding{Kind: "issue", Title: "issue #9", Fix: &domain.Fix{Act: "work-issue"}}, Result: &Result{Summary: "the brain gave up"}},
+		{Finding: domain.Finding{Kind: "release", Title: "v1.3.0", Fix: &domain.Fix{Act: "release"}}, Result: &Result{Summary: "push failed"}},
+		{Finding: domain.Finding{Kind: "news", Severity: "medium", Title: "a blog post"}, Disp: Report, New: true},
+	}
+	all, urgent := attention(&Tick{Items: items})
+	if len(all) != 11 {
+		t.Fatalf("attention: %q", all)
+	}
+	got := strings.Join(urgent, "\n")
+	for _, want := range []string{"CVE in x", "tagged", "release v1.2.0 failed", "rolled back", "rc.1 failed on the canary", "80% of the cap", "PR #4 waits", "merge it?", "v1.3.0 — push failed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("urgent lacks %q", want)
+		}
+	}
+	for _, not := range []string{"main is red", "issue #9", "a blog post"} {
+		if strings.Contains(got, not) {
+			t.Errorf("urgent has %q", not)
+		}
 	}
 }

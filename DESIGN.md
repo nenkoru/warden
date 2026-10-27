@@ -86,8 +86,8 @@ The built-ins:
 | `go-bump`, `npm-bump`, `pip-bump` | act | the worktree bump playbooks (§8a) |
 | `tool-clean` | act | a cache's own clean command |
 | `propose` | act | write a proposal file and ask |
-| `github-pause`, `github-issues`, `github-prs`, `github-main` | pause / observe | one GitHub repository: the kill switch, issues, PRs and their CI, main's CI and release state |
-| `work-issue`, `review-pr`, `merge-pr`, `release`, `delegate`, `pickup-branch` | act | the maintainer playbooks (`docs/usecases/github-maintainer.md`) |
+| `github-pause`, `github-issues`, `github-prs`, `github-main`, `github-experiment`, `github-roadmap` | pause / observe | one GitHub repository: the kill switch, issues, PRs and their CI, main's CI, release state and reverts, the experiment log's daily publication, the weekly roadmap and RFC timer |
+| `work-issue`, `review-pr`, `merge-pr`, `release`, `delegate`, `pickup-branch`, `publish-log`, `revert-pr`, `roadmap`, `rfc-accept` | act | the maintainer playbooks (`docs/usecases/github-maintainer.md`) |
 
 Advisories and news are not steps: they come from `[feeds]` (`osv = true` for every inventory component OSV knows,
 `releases` for GitHub repos, `rss` for anything else).

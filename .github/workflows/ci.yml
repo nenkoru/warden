@@ -4,12 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # daily on main: a new advisory (govulncheck) turns main red without a push
+    - cron: "17 5 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -68,6 +71,69 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
+
+  coverage:
+    # total coverage must not drop by more than 0.1 points against the latest green main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # the baseline artifact of main's run
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: go test -race -count=1 -coverprofile=cover.out -covermode=atomic ./...
+      - run: go tool cover -func=cover.out > cover.txt
+      - name: Record (a push to main)
+        if: github.event_name == 'push'
+        run: go run ./scripts/covergate -func cover.txt -sha "$GITHUB_SHA" -out coverage.json
+      - if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage.json
+          retention-days: 90
+      - name: Baseline (the latest green push to main)
+        id: base
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --event push --workflow CI --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          echo "run-id=$id" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request' && steps.base.outputs.run-id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true # an expired artifact is no baseline: covergate passes with a notice
+        with:
+          name: coverage
+          path: base
+          run-id: ${{ steps.base.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Compare with main
+        if: github.event_name == 'pull_request'
+        run: go run ./scripts/covergate -func cover.txt -base base/coverage.json -max-drop 0.1
+
+  fuzz:
+    # every Go fuzz target (func FuzzX) for 20s; a crasher lands in testdata/fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: sh scripts/fuzz.sh
+        env:
+          FUZZTIME: 20s
 
   demos:
     # end-to-end runs without a model; demo-go-project.sh talks to the real OSV and Go proxy

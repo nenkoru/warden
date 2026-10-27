@@ -13,7 +13,8 @@
 //	warden improve [--candidate FILE] [--agent] | rollback
 //	warden add REF | verify          extensions from registries, pinned in warden.lock
 //	warden units [--listen]          launchd plist / systemd units (written, not loaded)
-//	warden github-note --event E     a hook command: the event JSON on stdin → a comment on the repo's "Warden log" issue
+//	warden github-note --event E     a hook command: the event JSON on stdin → a comment on the repo's "Warden digest" issue
+//	warden update [--check]          check the releases now; install the newest verified one ([update]; see docs/usecases/self-update.md)
 //
 // Every command takes --config PATH (default ./warden.toml).
 package main
@@ -62,6 +63,8 @@ func main() {
 	noTick := fs.Bool("no-tick", false, "signal: only queue it")
 	event := fs.String("event", "", "github-note: the hook event (Report, Ask, Digest)")
 	listenUnits := fs.Bool("listen", false, "units: keep one process awake (warden listen) instead of a tick per interval")
+	checkOnly := fs.Bool("check", false, "update: check and verify, install nothing")
+	preflight := fs.Bool("preflight", false, "update: load the config and print the version (how an installer checks a new binary)")
 	var pos []string
 	for len(args) > 0 {
 		_ = fs.Parse(args) // ExitOnError: Parse exits instead of returning
@@ -79,10 +82,12 @@ func main() {
 	case "init":
 		err = initCmd(*cfgPath, *pack, *dir, *name)
 	case "tick":
-		err = withInstance(*cfgPath, func(in *core.Instance) error { return tick(ctx, in) })
+		err = withInstance(*cfgPath, func(in *core.Instance) error { _, err := tick(ctx, in); return err })
 	case "listen":
 		err = withConfig(*cfgPath, func(cfg *core.Config) error {
-			core.Listen(ctx, cfg, nil, tickFn(*cfgPath), os.Stderr)
+			lctx, restart := context.WithCancel(ctx)
+			defer restart()
+			core.Listen(lctx, cfg, nil, tickFn(*cfgPath, restart), os.Stderr)
 			return nil
 		})
 	case "serve":
@@ -90,7 +95,21 @@ func main() {
 			if len(cfg.Serve.Tokens) == 0 {
 				return errors.New("serve: no [serve] tokens in warden.toml (token → sender)")
 			}
-			return core.Serve(ctx, cfg, tickFn(*cfgPath), os.Stderr)
+			sctx, restart := context.WithCancel(ctx)
+			defer restart()
+			return core.Serve(sctx, cfg, tickFn(*cfgPath, restart), os.Stderr)
+		})
+	case "update":
+		if *preflight {
+			err = withConfig(*cfgPath, func(*core.Config) error { fmt.Println("warden " + version.Version); return nil })
+			break
+		}
+		err = withInstance(*cfgPath, func(in *core.Instance) error {
+			msg, err := in.UpdateNow(ctx, *checkOnly)
+			if msg != "" {
+				fmt.Println(msg)
+			}
+			return err
 		})
 	case "mcp":
 		err = withConfig(*cfgPath, func(cfg *core.Config) error {
@@ -108,7 +127,7 @@ func main() {
 				fmt.Println("queued for the next tick")
 				return nil
 			}
-			return withInstance(*cfgPath, func(in *core.Instance) error { return tick(ctx, in) })
+			return withInstance(*cfgPath, func(in *core.Instance) error { _, err := tick(ctx, in); return err })
 		})
 	case "github-note":
 		err = withConfig(*cfgPath, func(cfg *core.Config) error { return githubNote(ctx, cfg, *event) })
@@ -182,7 +201,7 @@ func main() {
 var ownerLooked = map[string]bool{"status": true, "report": true, "approve": true, "decline": true, "feedback": true, "improve": true, "rollback": true, "signal": true}
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: warden init|tick|listen|serve|mcp|signal|status|approve|decline|feedback|improve|rollback|add|verify|units|report|packs|github-note|version [--config warden.toml]")
+	fmt.Fprintln(os.Stderr, "usage: warden init|tick|listen|serve|mcp|signal|status|approve|decline|feedback|improve|rollback|add|verify|units|report|packs|github-note|update|version [--config warden.toml]")
 	os.Exit(2)
 }
 
@@ -205,15 +224,26 @@ func withInstance(path string, fn func(*core.Instance) error) error {
 	})
 }
 
-func tickFn(path string) func(context.Context) {
+// tickFn: one tick of a long-lived process; restart ends the process when
+// the tick replaced the binary (its supervisor — launchd KeepAlive, systemd
+// Restart=always — starts the new one).
+func tickFn(path string, restart func()) func(context.Context) {
 	return func(ctx context.Context) {
-		if err := withInstance(path, func(in *core.Instance) error { return tick(ctx, in) }); err != nil {
+		err := withInstance(path, func(in *core.Instance) error {
+			t, err := tick(ctx, in)
+			if t != nil && t.Restart {
+				fmt.Fprintln(os.Stderr, "warden: the binary was replaced (an update or a rollback): exiting so the supervisor starts it")
+				restart()
+			}
+			return err
+		})
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "warden:", err)
 		}
 	}
 }
 
-func tick(ctx context.Context, in *core.Instance) error {
+func tick(ctx context.Context, in *core.Instance) (*core.Tick, error) {
 	start := time.Now()
 	t, err := in.Tick(ctx)
 	if t != nil {
@@ -240,7 +270,7 @@ func tick(ctx context.Context, in *core.Instance) error {
 			fmt.Println("error:", e)
 		}
 	}
-	return err
+	return t, err
 }
 
 func improve(ctx context.Context, in *core.Instance, from string, useAgent bool) error {

@@ -132,6 +132,21 @@ func (in *Instance) sources() []*SignalSource {
 	return out
 }
 
+// parseSignalLines: a command source's output, one Signal JSON object per
+// line; lines that are not one, or carry no text, are skipped.
+func parseSignalLines(b []byte) []Signal {
+	var out []Signal
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc.Buffer(nil, 1<<20)
+	for sc.Scan() {
+		var sig Signal
+		if json.Unmarshal(sc.Bytes(), &sig) == nil && sig.Text != "" {
+			out = append(out, sig)
+		}
+	}
+	return out
+}
+
 func (in *Instance) poll(ctx context.Context, s *SignalSource) ([]Signal, error) {
 	var out []Signal
 	switch s.Kind {
@@ -145,14 +160,7 @@ func (in *Instance) poll(ctx context.Context, s *SignalSource) ([]Signal, error)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w %s", s.Name, err, tail(errb.String(), 200))
 		}
-		sc := bufio.NewScanner(bytes.NewReader(b))
-		sc.Buffer(nil, 1<<20)
-		for sc.Scan() {
-			var sig Signal
-			if json.Unmarshal(sc.Bytes(), &sig) == nil && sig.Text != "" {
-				out = append(out, sig)
-			}
-		}
+		out = parseSignalLines(b)
 	case "dir", "stream":
 		_ = os.MkdirAll(filepath.Join(s.Dir, "done"), 0o700)
 		ents, _ := os.ReadDir(s.Dir)

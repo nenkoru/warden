@@ -257,10 +257,16 @@ func ReadLock(path string) (Lock, error) {
 	if err != nil {
 		return l, err
 	}
-	if err := toml.Unmarshal(b, &l); err != nil {
+	if l, err = parseLock(b); err != nil {
 		return l, fmt.Errorf("registry: %s: %w", path, err)
 	}
 	return l, nil
+}
+
+// parseLock: a lock file's contents.
+func parseLock(b []byte) (Lock, error) {
+	var l Lock
+	return l, toml.Unmarshal(b, &l)
 }
 
 func (l Lock) Write(path string) error {

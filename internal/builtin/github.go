@@ -1,9 +1,11 @@
 package builtin
 
 // The github-repo pack's built-ins: observers of one repository (issues,
-// PRs, main's CI and release state, the owner's kill switch) and the acts
-// that maintain it (work-issue, review-pr, merge-pr, release, delegate,
-// pickup-branch), plus github-note for the owner's notifications.
+// PRs, main's CI and release state, the owner's kill switch, the experiment
+// log, the weekly roadmap) and the acts that maintain it (work-issue,
+// review-pr, merge-pr, release, delegate, pickup-branch, publish-log,
+// revert-pr, roadmap, rfc-accept), plus github-note for the owner's
+// notifications.
 //
 // Everything an outsider can write (issue and PR titles, bodies, comments,
 // external code) is data: fenced as untrusted wherever it reaches a model,
@@ -232,12 +234,12 @@ func slug(s string) string {
 
 // ---- protected paths
 
-// DefaultProtected: paths no automatic change may touch without the owner.
-var DefaultProtected = []string{".github/**", ".goreleaser.yaml", ".goreleaser.yml", "SECURITY.md", "LICENSE", "NOTICE",
-	"packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"}
+// The human-only kernel (github.Kernel, github.KernelNames) is always
+// protected; params.protected and params.protected_names only add to it.
 
-// DefaultProtectedNames: any file whose name contains one of these.
-var DefaultProtectedNames = []string{"secret", "token", "credential", "signing", "signature", "cosign", "gpg"} // not "sign": signals.go, DESIGN.md
+// DefaultProtectedNames: words protected on top of the kernel's when
+// params.protected_names is unset.
+var DefaultProtectedNames = []string{"signing", "signature", "cosign", "gpg"} // not "sign": signals.go, DESIGN.md
 
 // Protected: the files among changed that match a protected pattern (globs
 // with ** across folders) or whose base name contains a protected word.
@@ -247,7 +249,7 @@ func Protected(changed, patterns, names []string) []string {
 		f = strings.TrimPrefix(filepath.ToSlash(f), "./")
 		hit := false
 		for _, p := range patterns {
-			if globPath(strings.TrimPrefix(p, "/"), f) {
+			if github.Glob(p, f) {
 				hit = true
 				break
 			}
@@ -266,47 +268,21 @@ func Protected(changed, patterns, names []string) []string {
 	return out
 }
 
+// protectedFor: the kernel files among changed plus what the params add;
+// nothing in the config removes a kernel path.
 func protectedFor(env *Env, changed []string) []string {
-	pats := listParam(env, "protected")
-	if len(pats) == 0 {
-		pats = DefaultProtected
-	}
 	names := DefaultProtectedNames
 	if v, ok := env.Params["protected_names"]; ok {
 		names = splitList(v)
 	}
-	return Protected(changed, pats, names)
-}
-
-// globPath: path.Match per segment; "**" matches any number of segments; a
-// pattern without "/" matches the base name anywhere ("*.warden.toml").
-func globPath(pat, p string) bool {
-	if !strings.Contains(pat, "/") {
-		ok, _ := path.Match(pat, path.Base(p))
-		return ok
+	out := github.KernelFiles(changed)
+	for _, f := range Protected(changed, listParam(env, "protected"), names) {
+		if !slices.Contains(out, f) {
+			out = append(out, f)
+		}
 	}
-	return globSegs(strings.Split(pat, "/"), strings.Split(p, "/"))
-}
-
-func globSegs(ps, ss []string) bool {
-	for len(ps) > 0 {
-		if ps[0] == "**" {
-			for i := 0; i <= len(ss); i++ {
-				if globSegs(ps[1:], ss[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(ss) == 0 {
-			return false
-		}
-		if ok, _ := path.Match(ps[0], ss[0]); !ok {
-			return false
-		}
-		ps, ss = ps[1:], ss[1:]
-	}
-	return len(ss) == 0
+	sort.Strings(out)
+	return out
 }
 
 // ---- small state (daily counters) under <state>/github
@@ -491,12 +467,12 @@ func ciState(ctx context.Context, c *github.Client, sha string, required []strin
 
 var reDepsTitle = regexp.MustCompile(`(?i)^(chore\(deps\)|deps|build\(deps\)|bump)\b`)
 
-// smallIssue: labels the owner uses for small work (param small_labels), or
-// a dependency-only change.
+// smallIssue: labels the owner uses for small work (param small_labels; by
+// default also the roadmap's size:S), or a dependency-only change.
 func smallIssue(env *Env, labels []string, title string) bool {
 	small := listParam(env, "small_labels")
 	if len(small) == 0 {
-		small = []string{"small", "good first issue", "docs", "chore", "dependencies"}
+		small = []string{"small", "size:S", "good first issue", "docs", "chore", "dependencies"}
 	}
 	for _, l := range labels {
 		for _, s := range small {
@@ -506,6 +482,62 @@ func smallIssue(env *Env, labels []string, title string) bool {
 		}
 	}
 	return reDepsTitle.MatchString(strings.TrimSpace(title))
+}
+
+// issueSize: S | M | L | XL from the labels (small, size:X), else from the
+// lines the change touched (data's lines_added + lines_deleted); "" unknown.
+func issueSize(labels []string, data map[string]string) string {
+	for _, l := range labels {
+		l = strings.ToLower(strings.TrimSpace(l))
+		if l == "small" {
+			return "S"
+		}
+		if v, ok := strings.CutPrefix(l, "size:"); ok {
+			switch v = strings.ToUpper(strings.TrimSpace(v)); v {
+			case "S", "M", "L", "XL":
+				return v
+			}
+		}
+	}
+	a, errA := strconv.Atoi(data["lines_added"])
+	d, errD := strconv.Atoi(data["lines_deleted"])
+	if errA != nil || errD != nil || a+d == 0 {
+		return ""
+	}
+	return sizeOfLines(a + d)
+}
+
+// sizeOfLines: S < 50 lines changed, M < 200, L < 800, else XL.
+func sizeOfLines(n int) string {
+	switch {
+	case n < 50:
+		return "S"
+	case n < 200:
+		return "M"
+	case n < 800:
+		return "L"
+	}
+	return "XL"
+}
+
+// diffStat: the staged change's files and lines into data.
+func diffStat(ctx context.Context, wt string, data map[string]string) {
+	out, err := git(ctx, wt, "diff", "--cached", "--numstat", "--no-renames")
+	if err != nil {
+		return
+	}
+	files, added, deleted := 0, 0, 0
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		files++
+		a, _ := strconv.Atoi(f[0]) // "-" for a binary file
+		d, _ := strconv.Atoi(f[1])
+		added, deleted = added+a, deleted+d
+	}
+	data["files"], data["lines_added"], data["lines_deleted"] = strconv.Itoa(files), strconv.Itoa(added), strconv.Itoa(deleted)
 }
 
 // prType: a conventional-commit type from an issue's labels.

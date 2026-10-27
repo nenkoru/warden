@@ -15,6 +15,10 @@ import (
 //
 //	lock            one tick at a time (flock)
 //	journal.jsonl   append-only: every tick, step begin/end (crash recovery)
+//	tasks.jsonl     append-only, with params.experiment_log = "on": one record per act on a task (issue, PR,
+//	                phase, brain, model, ok, wall time, tokens, failure categories, the act's data) and the
+//	                coding brain's idle time (kind "idle"); best effort, 0600 (internal/experiment, tasks.go)
+//	idle.json       the previous tick's time, for the idle records
 //	seen.json       finding fingerprints: first/last seen, reported or not
 //	feeds.json      the last release seen per watched repository
 //	pending.json    actions waiting for the owner's yes/no
@@ -77,13 +81,16 @@ type Result struct {
 	Refused bool     `json:"refused,omitempty"` // not run (no sandbox, a hook blocked): not a failure
 	// Deferred: nothing happened yet (CI running, a brain off-hours); never stored.
 	Deferred bool `json:"-"`
+	// Data: the act's task fields for the experiment log (tasks.go); never stored here.
+	Data map[string]string `json:"-"`
 }
 
-// DigestState: the day's lines for the daily digest (digest.go).
+// DigestState: the day's lines for the daily digest (pause.go).
 type DigestState struct {
 	Day   string   `json:"day,omitempty"`
 	Lines []string `json:"lines,omitempty"`
 	Spend string   `json:"spend,omitempty"`
+	Extra []string `json:"extra,omitempty"` // lines for the digest's own section (AddDigestExtra)
 }
 
 // Advisory: "versions below Fixed are vulnerable", from a signal.

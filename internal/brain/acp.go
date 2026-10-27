@@ -126,7 +126,7 @@ func (b *acpBrain) Do(ctx context.Context, system, task string, tools []Tool) (s
 		_ = cmd.Wait() // killed above: its exit status says nothing
 	}()
 
-	cl := &acpClient{cwd: cwd, allow: c.Allow, confine: c.Confine, log: c.Log}
+	cl := &acpClient{cwd: cwd, allow: c.Allow, confine: c.Confine, log: c.Log, stats: StatsFrom(ctx)}
 	conn := acp.NewClientSideConnection(cl, stdin, stdout)
 	if _, err := conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -151,6 +151,7 @@ func (b *acpBrain) Do(ctx context.Context, system, task string, tools []Tool) (s
 	if err != nil {
 		return text, fmt.Errorf("brain: acp prompt: %w", err)
 	}
+	cl.stats.Finish(string(resp.StopReason))
 	switch resp.StopReason {
 	case acp.StopReasonRefusal:
 		return text, errors.New("the agent declined the request")
@@ -168,6 +169,7 @@ type acpClient struct {
 	allow   func(kind string, paths []string) bool
 	confine bool
 	log     io.Writer
+	stats   *Stats // the agent's tool calls (its own tools): counted, steps unknown
 
 	mu  sync.Mutex
 	out strings.Builder
@@ -209,6 +211,12 @@ func (c *acpClient) ok(kind string, paths []string) bool {
 }
 
 func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) error {
+	if tc := n.Update.ToolCall; tc != nil {
+		c.stats.Call(tc.Title, "", CallOK)
+	}
+	if u := n.Update.ToolCallUpdate; u != nil && u.Status != nil && *u.Status == acp.ToolCallStatusFailed {
+		c.stats.failed()
+	}
 	if ch := n.Update.AgentMessageChunk; ch != nil && ch.Content.Text != nil {
 		c.mu.Lock()
 		c.out.WriteString(ch.Content.Text.Text)

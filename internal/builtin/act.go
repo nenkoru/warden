@@ -24,6 +24,9 @@ type Result struct {
 	// Deferred: nothing happened yet and nothing is remembered: the act is
 	// proposed again next tick (CI still running, the local model off-hours).
 	Deferred bool
+	// Data: what the act did to a task, for the experiment log (issue, pr,
+	// phase, brain, size, files, lines, tool errors, …); nil: not a task.
+	Data map[string]string
 }
 
 // Act runs one built-in act for a finding.
@@ -42,7 +45,7 @@ func Act(ctx context.Context, name string, with map[string]any, f domain.Finding
 		return toolClean(ctx, with, f, env)
 	case "propose":
 		return propose(ctx, f, env)
-	case "work-issue", "review-pr", "merge-pr", "release", "delegate", "pickup-branch":
+	case "work-issue", "review-pr", "merge-pr", "release", "delegate", "pickup-branch", "publish-log", "revert-pr", "roadmap", "rfc-accept":
 		return actGitHub(ctx, name, f, env)
 	}
 	return Result{Summary: fmt.Sprintf("builtin act %q: unknown", name)}
