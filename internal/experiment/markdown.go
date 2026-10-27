@@ -17,8 +17,9 @@ const intro = "Warden maintains this repository with a local model doing all of 
 	"(first-push green is the share of PRs whose CI passed without a fix round; tool-call errors are calls to a tool " +
 	"that does not exist or with arguments that do not parse, per tool call; wall time and tokens are the model's work on the task), then each day's tasks and its failures with their categories (tool-call, context-limit, " +
 	"wrong-edit, loop, timeout, gave-up, other) and one-line reasons. Idle hours are the model's off-hours, an " +
-	"unreachable upstream or a spent budget: time it could not work, never a failure. \"so far\" marks the period " +
-	"still running."
+	"unreachable upstream or a spent budget: time it could not work, never a failure. A revert marks its task's row " +
+	"on the day and in the week the task began (and counts as reverted in that week), with a note on the day it " +
+	"happened. \"so far\" marks the period still running."
 
 // Markdown renders the report; now marks the day and week still running.
 // The output depends only on the events and the day now falls on.
@@ -80,6 +81,13 @@ func (r Report) Markdown(now time.Time) string {
 			for _, f := range d.Failures {
 				fmt.Fprintf(&b, "- %s %s %s: **%s** — %s\n", f.At.In(loc).Format("15:04"), f.Task, or(f.Phase, "?"), strings.Join(f.Categories, ", "), reason(f.Reason))
 			}
+		}
+		for _, r := range d.Reverts {
+			when := "a task from before this log"
+			if r.First != "" {
+				when = "its row is under " + r.First
+			}
+			fmt.Fprintf(&b, "\nReverted at %s: %s (PR #%d) — %s.\n", r.At.In(loc).Format("15:04"), r.Task, r.PR, when)
 		}
 		if h := d.IdleHours(); h > 0 {
 			var parts []string

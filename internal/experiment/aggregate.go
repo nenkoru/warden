@@ -51,7 +51,16 @@ type Period struct {
 	Name     string
 	Tasks    []Task
 	Failures []Failure
+	Reverts  []Revert           // reverts that happened in the period (their task's row is where it began)
 	Idle     map[string]float64 // minutes by reason
+}
+
+// Revert: a task undone, the day it happened.
+type Revert struct {
+	At    time.Time
+	Task  string
+	PR    int
+	First string // the day the task began ("" = before the log)
 }
 
 // IdleHours: every reason together.
@@ -82,9 +91,41 @@ func Aggregate(evs []Event, loc *time.Location) Report {
 	if loc == nil {
 		loc = time.UTC
 	}
+	evs = attachReverts(evs, loc)
+	return Report{Loc: loc, Weeks: periods(evs, func(t time.Time) string { return weekOf(t, loc) }), Days: periods(evs, func(t time.Time) string { return dayOf(t, loc) })}
+}
+
+// attachReverts: a revert belongs to the task it undoes: it marks the row of
+// the day and week of the task's first event (no row, no task of its own
+// where it happened), and leaves a note on the day it happened. A revert of
+// a task from before the log is only that note.
+func attachReverts(evs []Event, loc *time.Location) []Event {
 	evs = append([]Event(nil), evs...)
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].At.Before(evs[j].At) })
-	return Report{Loc: loc, Weeks: periods(evs, func(t time.Time) string { return weekOf(t, loc) }), Days: periods(evs, func(t time.Time) string { return dayOf(t, loc) })}
+	first := map[string]time.Time{}
+	for _, e := range evs {
+		if k := taskKey(e); k != "" && e.Kind != "idle" && e.Phase != "revert" {
+			if _, ok := first[k]; !ok {
+				first[k] = e.At
+			}
+		}
+	}
+	out := make([]Event, 0, len(evs))
+	for _, e := range evs {
+		if e.Phase != "revert" || e.Kind == "idle" {
+			out = append(out, e)
+			continue
+		}
+		note := Event{At: e.At, Kind: "revert", Issue: e.Issue, PR: e.PR, Summary: e.Summary}
+		if at, ok := first[taskKey(e)]; ok {
+			note.Data = map[string]string{"first": dayOf(at, loc)}
+			e.At = at
+			out = append(out, e)
+		}
+		out = append(out, note)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out
 }
 
 func periods(evs []Event, name func(time.Time) string) []Period {
@@ -120,8 +161,12 @@ func period(name string, evs []Event) Period {
 	tasks := map[string]*Task{}
 	var order []string
 	for _, e := range evs {
-		if e.Kind == "idle" {
+		switch e.Kind {
+		case "idle":
 			p.Idle[or(e.Reason, "off-hours")] += e.Minutes
+			continue
+		case "revert":
+			p.Reverts = append(p.Reverts, Revert{At: e.At, Task: taskKey(e), PR: e.PR, First: e.Data["first"]})
 			continue
 		}
 		k := taskKey(e)

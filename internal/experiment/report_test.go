@@ -51,8 +51,8 @@ func TestAggregate(t *testing.T) {
 	if len(r.Days) != 4 || r.Days[0].Name != "2026-10-28" || r.Days[3].Name != "2026-10-23" {
 		t.Fatalf("days: %+v", r.Days)
 	}
-	w := r.Weeks[0].Summary() // 26–28 Oct: #5 (fix round, merged), #7 (failed twice), #3 (reverted)
-	if w.Tasks != 3 || w.Merged != 1 || w.Reverted != 1 || w.Pushed != 1 || w.Green != 0 || w.AvgAttempts != 2 || w.AvgFix != 0.5 ||
+	w := r.Weeks[0].Summary() // 26–28 Oct: #5 (fix round, merged), #7 (failed twice); #3's revert belongs to week 43
+	if w.Tasks != 2 || w.Merged != 1 || w.Reverted != 0 || w.Pushed != 1 || w.Green != 0 || w.AvgAttempts != 2 || w.AvgFix != 0.5 ||
 		w.TopFailures != "wrong-edit 2, context-limit 1, loop 1" || w.TokensIn != 822_000 || w.ToolCalls != 80 || w.CallErrors != 7 {
 		t.Fatalf("week 44: %+v", w)
 	}
@@ -63,8 +63,14 @@ func TestAggregate(t *testing.T) {
 		t.Fatalf("idle: %v", h)
 	}
 	old := r.Weeks[1].Summary()
-	if old.Tasks != 1 || old.Merged != 1 || old.Green != 1 || old.Pushed != 1 {
+	if old.Tasks != 1 || old.Merged != 1 || old.Green != 1 || old.Pushed != 1 || old.Reverted != 1 {
 		t.Fatalf("week 43: %+v", old)
+	}
+	if rev := r.Days[0]; len(rev.Tasks) != 0 || len(rev.Reverts) != 1 || rev.Reverts[0].Task != "#3" || rev.Reverts[0].First != "2026-10-23" {
+		t.Fatalf("the revert's day: a note, no row: %+v", rev)
+	}
+	if three := r.Days[3].Tasks[0]; three.Issue != 3 || !three.Reverted || !three.Merged || three.Attempts != 1 {
+		t.Fatalf("#3 is marked reverted on its own row: %+v", three)
 	}
 	five := r.Days[2].Tasks[0]
 	if five.Issue != 5 || five.Size != "L" || five.FirstPush != "red" || five.FixRounds != 1 || five.Attempts != 2 || !five.Merged || five.WallMS != 800_000 ||
