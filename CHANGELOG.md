@@ -33,9 +33,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Instance params accept arrays and tables (passed to packs as JSON).
 - `pickup-branch` titles the PR after the branch's commits (one commit: its subject and body; several: the oldest
   subject and a list of all), so releases count it right; the generic title stays the fallback.
+- Self-update (`[update]`, `internal/update`): Warden checks its GitHub releases inside the tick (at most every
+  `every`), verifies the archive — its line in `checksums.txt`, then the release workflow's GitHub build-provenance
+  attestation, a Sigstore bundle verified with sigstore-go against the public-good trusted root (signer
+  `…/.github/workflows/release.yml@refs/tags/<tag>`, GitHub Actions' issuer, SLSA provenance v1 naming the digest),
+  then `cosign` when present — and installs it at the end of a healthy tick (`<bin>.new` preflighted, `<bin>.prev`
+  kept, atomic rename). A new binary that never ends a tick healthy is rolled back with a high finding that always
+  pings. Channels `stable` (waits `canary_hours`, skips versions named by open `warden-rollback` issues) and `canary`;
+  `mode = "propose"`; on Kubernetes the image bump is proposed, never the binary touched. Optional fleet beacon (one
+  comment per instance on a pinned "Warden fleet" issue; `update.FleetStatus`). `warden update [--check]`; the
+  report's "Under the hood" names the version and the update state. A `listen`/`serve` process exits after a tick that
+  replaced the binary so its supervisor starts the new one. See `docs/usecases/self-update.md`.
+- GitHub client: anonymous (read-only) clients, releases, release assets, attestations, and editing the token user's
+  own issue comments (`PATCH …/issues/comments/N`, allowed by the guard; the author is checked first).
 
 ### Security
 
+- New dependency `github.com/sigstore/sigstore-go` v1.3.0 (release verification); `golang.org/x/net` v0.62.0 and
+  `google.golang.org/grpc` v1.85.0 in its graph, past GO-2026-6603/6611/6612/6617 and GO-2026-6348. The binary grows
+  from about 12 MB to 23 MB.
 - Build with Go 1.26.10 (`toolchain go1.26.10`), which fixes GO-2026-6809 (crypto/x509: distrust compromised
   intermediate certificates). This is a deliberate exception to the project's "dependencies at least two weeks old"
   rule, because it is a security fix in a Go patch release.

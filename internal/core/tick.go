@@ -40,6 +40,9 @@ type Tick struct {
 	Fresh      int    // new things worth a ping
 	Summary    string
 	Held       string // the ping was held back (the backoff, in words)
+	// Restart: the binary was replaced (an update or a rollback): a long-lived
+	// process (listen, serve) exits after this tick so its supervisor starts it.
+	Restart bool
 }
 
 // urgent: something that never waits for the backoff.
@@ -95,7 +98,8 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 	orders := in.readSignals(ctx, t, inv)
 	in.preOrders(ctx, orders, comps, inv, t)
 
-	findings := append(pauseItems, in.observe(ctx, t)...)
+	findings := append(pauseItems, in.updateBegin(ctx, t)...) // before observe: a rollback is in this tick's report
+	findings = append(findings, in.observe(ctx, t)...)
 	findings = append(findings, in.feeds(ctx, comps, inv, t)...)
 	findings = append(findings, in.health(ctx, t)...)
 	triage := in.Triage.Triage()
@@ -150,8 +154,10 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 		}
 	}
 	if err := in.St.Save(); err != nil {
+		in.updateEnd(ctx, t, false)
 		return t, err
 	}
+	in.updateEnd(ctx, t, true) // a healthy end: an install in flight is confirmed, a verified one installed
 	in.St.Journal("tick.end", map[string]any{"tick": t.ID, "findings": len(t.Items), "report": t.Report, "fresh": t.Fresh})
 	return t, nil
 }

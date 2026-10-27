@@ -110,6 +110,7 @@ func (in *Instance) report(ctx context.Context, t *Tick) error {
 	section(&b, "Important", important)
 	section(&b, "Digest (no ping)", digest)
 	b.WriteString("## Under the hood\n\n")
+	fmt.Fprintf(&b, "- %s\n", in.versionLine())
 	if len(ignored) > 0 {
 		fmt.Fprintf(&b, "- hidden by triage: %d (see journal.jsonl)\n", len(ignored))
 	}

@@ -47,6 +47,7 @@ warden tick    --config ~/src/myproj.warden.toml   # one pass; the report is in 
 warden status  --config ~/src/myproj.warden.toml   # what waits for you
 warden approve a_1b2c3d4e --config ~/src/myproj.warden.toml
 warden units   --config ~/src/myproj.warden.toml   # writes launchd/systemd units; you load them (see INSTALL.md)
+warden update  --check --config ~/src/myproj.warden.toml   # a newer verified release? ([update]: docs/usecases/self-update.md)
 ```
 
 When the dry-run reports look right, set `mode = "act"` and rules such as

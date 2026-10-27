@@ -24,6 +24,7 @@ import (
 	"github.com/nenkoru/warden/internal/policy"
 	"github.com/nenkoru/warden/internal/registry"
 	"github.com/nenkoru/warden/internal/skills"
+	"github.com/nenkoru/warden/internal/update"
 )
 
 // Instance: one warden bound to one domain, with its state lock held.
@@ -46,6 +47,11 @@ type Instance struct {
 	// to run unsandboxed (sandbox = "none").
 	Runner    string
 	NoSandbox string
+
+	// Upd: the self-update ([update]; selfupdate.go). nil when it could not
+	// be set up (updErr says why, in every tick's errors).
+	Upd    *update.Updater
+	updErr error
 
 	DryRun   bool
 	FirstRun bool              // the domain's first run (dry-run because mode is unset)
@@ -101,6 +107,7 @@ func Open(cfg *Config) (*Instance, error) {
 	in := &Instance{Cfg: cfg, Dom: dom, St: st, Triage: OpenTriage(cfg.State), Web: builtin.DefaultWeb(), Now: time.Now,
 		Refused: map[string]string{}, readOnly: map[string]bool{}}
 	in.Run = in.contained
+	in.Upd, in.updErr = update.New(cfg.Update, cfg.Name, cfg.State, cfg.Path)
 	if cfg.Sandbox == "none" {
 		in.Runner = "none"
 	} else if r, err := pickRunner(cfg.Sandbox); err != nil {

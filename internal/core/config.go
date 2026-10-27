@@ -19,6 +19,7 @@ import (
 
 	"github.com/nenkoru/warden/internal/hooks"
 	"github.com/nenkoru/warden/internal/policy"
+	"github.com/nenkoru/warden/internal/update"
 )
 
 // Config is warden.toml.
@@ -55,6 +56,8 @@ type Config struct {
 	Serve       ServeConfig    `toml:"serve"`
 	// Backoff: ping less when the owner ignores the pings (backoff.go).
 	Backoff Backoff `toml:"backoff"`
+	// Update: Warden updating itself from its verified GitHub releases (internal/update).
+	Update update.Config `toml:"update"`
 
 	Path string `toml:"-"` // warden.toml, absolute
 	Dir  string `toml:"-"` // its folder
@@ -217,6 +220,9 @@ func (c *Config) normalize() error {
 		return fmt.Errorf("budget: amounts must not be negative")
 	}
 	if err := c.Backoff.normalize(); err != nil {
+		return err
+	}
+	if err := c.Update.Normalize(func(p string) string { return c.abs(p, ".") }); err != nil {
 		return err
 	}
 	c.State = c.abs(c.State, ".warden")

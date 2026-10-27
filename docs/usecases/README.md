@@ -8,4 +8,5 @@ One page per shipped pack, each with a real configuration and the report it prod
 - [A Linux server](linux-server.md) — read-only: disk, failed units, journal errors, GPUs, service health
 - [A GitHub repository, maintained](github-maintainer.md) — issues into PRs, reviews, merges on green CI, releases; kill switch, budget
 - [Signals: news, alerts and messages](signals.md) — feeds, chat adapters, log streams, webhooks, A2A; trust tiers
+- [Warden updating itself](self-update.md) — verified releases (checksum + Sigstore build provenance), canary and stable, rollback, the fleet beacon
 - [Writing your own domain pack](writing-a-pack.md) — the manifest, mapping output, floors
