@@ -365,14 +365,20 @@ func (u *Updater) rolledBackElsewhere(ctx context.Context) (func(tag string) boo
 		return nil, err
 	}
 	return func(tag string) bool {
-		re := regexp.MustCompile(`(?:^|[^\w.])v?` + regexp.QuoteMeta(strings.TrimPrefix(tag, "v")) + `(?:$|[^\w.-]|\.(?:$|\D))`)
 		for _, i := range is {
-			if re.MatchString(i.Title) || re.MatchString(i.Body) {
+			if NamesVersion(i.Title, tag) || NamesVersion(i.Body, tag) {
 				return true
 			}
 		}
 		return false
 	}, nil
+}
+
+// NamesVersion: whether a text names exactly this version ("v0.3.0" is not
+// named by "v0.3.0-rc.1" or "v0.3.0.1", nor "v0.3.0-rc.1" by "v0.3.0-rc.10").
+func NamesVersion(text, tag string) bool {
+	re := regexp.MustCompile(`(?:^|[^\w.])v?` + regexp.QuoteMeta(strings.TrimPrefix(tag, "v")) + `(?:$|[^\w.-]|\.(?:$|\D))`)
+	return re.MatchString(text)
 }
 
 func (u *Updater) archiveName(tag string) string {

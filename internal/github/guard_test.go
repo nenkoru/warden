@@ -16,6 +16,8 @@ func TestGuard(t *testing.T) {
 		{"PATCH", p + "/issues/comments/77", nil}, {"GET", p + "/releases?per_page=30", nil}, {"GET", p + "/releases/assets/5", nil},
 		{"GET", p + "/attestations/sha256:abc", nil},
 		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0-rc.1", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0-rc.12", "sha": "abc"}},
 		{"POST", "/graphql", map[string]any{"query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { number } } }"}},
 	}
 	for _, a := range allowed {
@@ -34,6 +36,11 @@ func TestGuard(t *testing.T) {
 		{"DELETE", p + "/issues/comments/77", nil}, {"PATCH", p + "/issues/77", nil}, {"PATCH", p + "/issues/comments/x", nil},
 		{"POST", p + "/releases", nil}, {"PATCH", p + "/releases/5", nil},
 		{"POST", p + "/git/refs", map[string]string{"ref": "refs/heads/main", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0-rc", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0-rc.1x", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0-beta.1", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0-rc.1\n", "sha": "abc"}},
+		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/latest", "sha": "abc"}},
 		{"POST", "/repos/other/repo/issues", nil}, {"POST", "/user/repos", nil},
 		{"POST", "/graphql", map[string]any{"query": "mutation { updateRepository(input: {repositoryId: \"x\"}) { repository { id } } }"}},
 	}

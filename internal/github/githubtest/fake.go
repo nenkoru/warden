@@ -65,17 +65,20 @@ type Fake struct {
 	// CommentBy: comment authors by comment ID (default: Login). Comment IDs
 	// are issue*1000 + index + 1.
 	CommentBy map[int64]string
-	Releases  []github.Release
-	Assets    map[int64][]byte                // asset ID → content
-	Attests   map[string][]github.Attestation // "sha256:hex" → attestations
-	Anonymous bool                            // GET requests without a token are served
-	Reviews   []Review
-	Merged    []int
-	Refs      map[string]string // refs created through the API → sha
-	Bodies    []string          // every request body
-	Requests  []string          // "METHOD path"
-	Ready     []int             // PRs marked ready for review
-	next      int
+	// CommentAssoc: author associations by comment ID (default: OWNER for
+	// Login, NONE for anyone else).
+	CommentAssoc map[int64]string
+	Releases     []github.Release
+	Assets       map[int64][]byte                // asset ID → content
+	Attests      map[string][]github.Attestation // "sha256:hex" → attestations
+	Anonymous    bool                            // GET requests without a token are served
+	Reviews      []Review
+	Merged       []int
+	Refs         map[string]string // refs created through the API → sha
+	Bodies       []string          // every request body
+	Requests     []string          // "METHOD path"
+	Ready        []int             // PRs marked ready for review
+	next         int
 	// ResolveHead: the sha of a pushed branch (tests: from the bare remote).
 	ResolveHead func(branch string) string
 	// FilesOf: the changed files of a pushed branch (tests: from the bare remote).
@@ -90,7 +93,7 @@ func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
 		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
-		Comments: map[int][]string{}, Refs: map[string]string{}, CommentBy: map[int64]string{}, Assets: map[int64][]byte{},
+		Comments: map[int][]string{}, Refs: map[string]string{}, CommentBy: map[int64]string{}, CommentAssoc: map[int64]string{}, Assets: map[int64][]byte{},
 		Attests: map[string][]github.Attestation{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
@@ -537,6 +540,9 @@ func (f *Fake) comment(n, i int, body string) github.Comment {
 	assoc := "NONE"
 	if by == f.Login {
 		assoc = "OWNER"
+	}
+	if a := f.CommentAssoc[id]; a != "" {
+		assoc = a
 	}
 	return github.Comment{ID: id, Body: body, User: github.User{Login: by}, AuthorAssociation: assoc}
 }

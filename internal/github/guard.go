@@ -11,7 +11,8 @@ import (
 // allows and whatever the repository enforces. Writes are an allowlist (the
 // few calls the maintainer needs); administration is denied even for reads.
 // A merge into the default branch happens only through PUT …/pulls/N/merge,
-// a ref is created only for a v* tag, and git pushes are checked separately
+// a ref is created only for a vX.Y.Z or vX.Y.Z-rc.N tag (the canary's
+// release candidate), and git pushes are checked separately
 // (only warden/* branches; see AllowedPush).
 
 var (
@@ -30,7 +31,7 @@ var (
 		{"POST", regexp.MustCompile(`^/git/refs$`)}, // tags only: checked on the body
 	}
 	adminDeny  = regexp.MustCompile(`^/(branches/[^/]+/protection|rulesets|rules/(?:$|[^b])|collaborators|invitations|keys|hooks|actions/(secrets|variables|permissions|runners)|dependabot/secrets|environments|pages|teams|transfer|vulnerability-alerts|automated-security-fixes|private-vulnerability-reporting|autolinks|interaction-limits|codespaces)`)
-	tagRef     = regexp.MustCompile(`^refs/tags/v\d+\.\d+\.\d+$`)
+	tagRef     = regexp.MustCompile(`^refs/tags/v\d+\.\d+\.\d+(-rc\.\d+)?$`)
 	graphAllow = regexp.MustCompile(`^mutation\(\$id: ID!\) \{ (markPullRequestReadyForReview|pinIssue)\(input: \{(pullRequestId|issueId): \$id\}\) \{ [a-zA-Z]+ \{ number \} \} \}$`)
 )
 
@@ -76,7 +77,7 @@ func (c *Client) Guard(method, path string, body any) string {
 				var r struct{ Ref string }
 				_ = json.Unmarshal(b, &r)
 				if !tagRef.MatchString(r.Ref) {
-					return "creating a ref other than a v* release tag"
+					return "creating a ref other than a vX.Y.Z or vX.Y.Z-rc.N release tag"
 				}
 			}
 			return ""

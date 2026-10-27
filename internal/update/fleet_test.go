@@ -141,6 +141,20 @@ func TestRollbackIssue(t *testing.T) {
 	}
 }
 
+func TestNamesVersion(t *testing.T) {
+	for text, want := range map[string]bool{
+		"release v0.3.0-rc.1 rolled back on buvg01": true, "v0.3.0-rc.1": true, "0.3.0-rc.1, see logs": true, "(v0.3.0-rc.1).": true,
+		"release v0.3.0-rc.10 rolled back": false, "release v0.3.0 rolled back": false, "v0.3.0-rc.1x": false, "v10.3.0-rc.1": false,
+	} {
+		if NamesVersion(text, "v0.3.0-rc.1") != want {
+			t.Errorf("NamesVersion(%q) = %v", text, !want)
+		}
+	}
+	if NamesVersion("release v0.3.0-rc.1 rolled back", "v0.3.0") {
+		t.Error("an rc names its final version")
+	}
+}
+
 func TestParseBeacon(t *testing.T) {
 	for _, body := range []string{"", "<!-- warden-fleet {} -->", "<!-- warden-fleet {\"name\":1} -->", "<!-- warden-fleet not json -->"} {
 		if _, ok := parseBeacon(body); ok {

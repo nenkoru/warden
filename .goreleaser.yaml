@@ -41,6 +41,12 @@ checksum:
 sboms:
   - artifacts: archive        # one SPDX SBOM per archive, made by syft
 
+git:
+  # vX.Y.Z and its vX.Y.Z-rc.N share a commit (the canary gate): the rc sorts
+  # before the release, and the workflow names the tag it builds
+  # (GORELEASER_CURRENT_TAG in release.yml)
+  prerelease_suffix: "-"
+
 changelog:
   use: git
   sort: asc

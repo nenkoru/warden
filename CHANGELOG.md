@@ -46,6 +46,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   replaced the binary so its supervisor starts the new one. See `docs/usecases/self-update.md`.
 - GitHub client: anonymous (read-only) clients, releases, release assets, attestations, and editing the token user's
   own issue comments (`PATCH …/issues/comments/N`, allowed by the guard; the author is checked first).
+- The canary gate for `release` (`params.canary`, `canary_hours` default 24, `canary_min_ticks` default 6): a merged
+  release PR is tagged `vX.Y.Z-rc.N` first (a prerelease only canary-channel Wardens install); once the named
+  instance's fleet beacon (comments by the token's own login or the owner only) reports the rc healthy for
+  `canary_hours` and `canary_min_ticks` ticks, not rolled back, with `main` green, `vX.Y.Z` is tagged on the same
+  commit. A rollback of the rc on the canary, or an open `warden-rollback` issue naming it, stops it: a `rollback`
+  finding that pings, a `needs-human` issue "release vX.Y.Z-rc.N failed on the canary" (once), and the next attempt
+  waits for newly merged PRs (a new release PR folds the unshipped CHANGELOG section back in; a new rc number on its
+  merge). rc tags are never "the latest release"; one in flight holds the next release PR. The report says
+  "release vX.Y.Z: rc.N on the canary «name» since …, healthy N h of 24". Without `canary` nothing changes.
+- The release workflow builds the pushed tag (`GORELEASER_CURRENT_TAG`), and goreleaser sorts `-rc.N` before its
+  release (`git.prerelease_suffix`): an rc and its release share a commit.
+
+### Changed
+
+- The GitHub guard lets `POST …/git/refs` create `refs/tags/vX.Y.Z-rc.N` as well as `refs/tags/vX.Y.Z` (nothing else).
 
 ### Security
 

@@ -96,7 +96,21 @@ It is rewritten in place (`PATCH /repos/{repo}/issues/comments/{id}` — the gua
 checks that the comment is the token user's own) at most hourly, or at once when the version or a rollback changes.
 On a rollback the instance also opens "release vX rolled back on <name>" labeled `warden-rollback` — which holds every
 stable instance back from vX while it stays open. `update.FleetStatus` reads the beacons back (only comments by the
-token's own user or by owners, members and collaborators), so a release can wait for the canary's health.
+token's own user or by owners, members and collaborators), and the maintainer's release waits for the canary's
+health (below).
+
+## Canary before tagging
+
+The Warden that maintains the repository (the `github-repo` pack with `params.canary = "buvg01"`) does not tag a
+release straight away. After the release PR merges it tags `vX.Y.Z-rc.N` on the merge commit; the release workflow
+publishes it as a prerelease, which only `channel = "canary"` instances take. The canary installs it, verifies it like
+any release and reports on its beacon. When that beacon — written by the maintainer's token user or the owner, nobody
+else counts — says the canary runs the rc, healthy for the maintainer's `canary_hours` (default 24) and at least
+`canary_min_ticks` (default 6) ticks, without a rollback, and `main` is green, the maintainer tags `vX.Y.Z` on the same
+commit; that final release is what the stable channel takes (after its own `canary_hours` from publishing, which may
+now be short). A rollback of the rc on the canary — or an open `warden-rollback` issue naming it — means no final tag,
+a ping, an issue for the owner, and a new attempt only after new PRs are merged. See
+[the maintainer](github-maintainer.md#canary-before-tagging).
 
 ## Configuration
 
@@ -146,8 +160,9 @@ image = "git.bayfut.net/nenkoru/warden"
 
 ## The owner's one-time steps
 
-1. Publish releases: the release workflow makes a **draft**; publishing it starts the stable channel's clock
-   (`canary_hours` counts from `published_at`).
+1. Releases are published by the release workflow (`release.draft: false`; self-update never sees drafts); an
+   `-rc.N` tag is a prerelease. Publishing starts the stable channel's clock (`canary_hours` counts from
+   `published_at`). Without the maintainer's canary gate, a release reaches the canary and, a day later, everyone.
 2. Create the labels `warden-rollback` and `warden-fleet` in the repository.
 3. For the beacon: a fine-grained token for `nenkoru/warden` only, *Issues: read and write*, in a file `chmod 600`.
 4. Install the binary as a plain file the service's user can write (`~/.warden/bin/warden`, `~/warden/bin/warden`),

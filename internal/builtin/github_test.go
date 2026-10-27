@@ -461,7 +461,7 @@ func TestReleaseFlow(t *testing.T) {
 		t.Fatalf("tag: %+v", r)
 	}
 	w.fake.With(func(f *githubtest.Fake) {
-		if f.Refs["refs/tags/v0.2.0"] != "m"+itoa(rel) {
+		if f.Refs["refs/tags/v0.2.0"] != "m"+itoa(rel) || len(f.Refs) != 1 { // without params.canary: no release candidate
 			t.Fatalf("refs: %v", f.Refs)
 		}
 	})

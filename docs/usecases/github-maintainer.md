@@ -25,7 +25,7 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 | `work-issue` | A branch `warden/issue-N-slug` from `main`; the brain edits files through file tools only (Go files are formatted in-process); the token is checked for in the diff; push; a **draft** PR "Closes #N" naming the brain, labeled `warden`. CI runs on it. Red → one fix round from the failed jobs' logs (fenced as data), pushed to the same branch; still red → delegated (if configured) or labeled `needs-human`. Green → marked ready, then `merge-pr`. | `needs_brain`, `max_per_day`, and `max_issues_per_day` |
 | `review-pr` | The diff and the CI results go to the brain, fenced as untrusted; one `COMMENT` review per head SHA; mentions in the text are defused; "@owner, looks good to me" only with green CI and a looks-good verdict. The PR's code is never checked out or run. | `needs_brain` |
 | `merge-pr` | Only own / Dependabot / trusted PRs; every reported check green (and `required_checks` present); mergeable; no `needs-human`; no protected path; not paused (asked again right before merging); a Dependabot major bump (or one it can't read) → `needs-human`. Squash merge, pinned to the head SHA. | `untrusted = "deny"` |
-| `release` | From green `main`, never paused, one a day: the next version from merged PR labels and titles (`feat`/`enhancement` → minor, else patch; breaking → an issue for the owner, never released). A release PR updates `CHANGELOG.md` from the PR titles and links (Keep a Changelog sections, no model). It merges under `merge-pr`'s rules; then Warden tags `vX.Y.Z` on its merge commit through the API, and the repository's release workflow builds it. A failed release workflow is a critical ping. | `untrusted = "deny"` |
+| `release` | From green `main`, never paused, one a day: the next version from merged PR labels and titles (`feat`/`enhancement` → minor, else patch; breaking → an issue for the owner, never released). A release PR updates `CHANGELOG.md` from the PR titles and links (Keep a Changelog sections, no model). It merges under `merge-pr`'s rules; then Warden tags `vX.Y.Z` on its merge commit through the API, and the repository's release workflow builds it — or, with `params.canary`, a release candidate first (*Canary before tagging*, below). A failed release workflow is a critical ping. | `untrusted = "deny"` |
 | `delegate` | Hands an issue to another agent of the owner's with `params.delegate_cmd`, an argv template (`{title}`, `{body}`, `{agent}`, `{issue}`, `{url}`, `{repo}`; no shell) — e.g. a team tracker CLI or a chat bridge the image already has. Used for issues labeled per `delegate_labels`, and for hard issues when no paid brain may take them (`delegate_default`). The work comes back as PRs from `trusted_authors`, or as a branch under `pickup_branches` that Warden opens a PR for. | `max_per_day` |
 | `pickup-branch` | A delegate's pushed branch becomes a PR, merged under the same rules as Warden's own. The PR is titled after the branch's commits (one commit: its subject and body; several: the oldest subject and a list of every subject), so the release reads the right bump. | `untrusted = "deny"` |
 
@@ -33,6 +33,33 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 needed in its image; CI decides. `checks_mode = "local"` runs `params.checks` in the sandbox in the worktree (no
 network, no secrets in the environment; modules from the Go proxy only), with one escalation on red, and opens a
 ready PR.
+
+## Canary before tagging
+
+With `params.canary` naming a Warden of the fleet (one with `[update] channel = "canary"` and a beacon; see
+[self-update](self-update.md)), a release reaches everyone else only after it ran on that instance:
+
+1. Once the release PR merges, Warden tags **`vX.Y.Z-rc.N`** on its merge commit (`N` counts up across attempts). The
+   release workflow builds it; goreleaser's `prerelease: auto` makes it a prerelease, which only canary-channel
+   Wardens install (verified like any release).
+2. Every tick `github-main` reads the beacons on the "Warden fleet" issue — only comments by the token's own login or
+   by `owner`; anyone may comment on a public issue — and reports "release vX.Y.Z: rc.N on the canary «name» since …,
+   healthy N h of 24". When the canary runs the rc, healthy for `canary_hours` (default 24) and at least
+   `canary_min_ticks` ticks (default 6), not rolled back, and `main` is still green, Warden tags **`vX.Y.Z` on the
+   same commit** (the canary is asked again right before). The release workflow builds the final release from it.
+3. If the canary rolled back from the rc, or an open `warden-rollback` issue names it, there is no final tag: a
+   `rollback` finding (it always pings), one `needs-human` issue "release vX.Y.Z-rc.N failed on the canary" that
+   mentions the owner, and the next attempt waits for newly merged PRs — then a new release PR (the unshipped
+   CHANGELOG section folds into it) and a new rc on its merge.
+
+An rc tag is not a release: the next version counts from the latest `vX.Y.Z`, and while an rc is in flight no
+second release PR is opened. Without `canary` the release act tags `vX.Y.Z` directly, as before. The guard lets Warden
+create `refs/tags/vX.Y.Z` and `refs/tags/vX.Y.Z-rc.N` and no other ref. Releases are published, not drafts
+(`release.draft: false`): self-update cannot see drafts, and the canary replaces the review of one.
+
+A beacon is rewritten at most hourly and carries no timestamp of its own, so a canary that stops ticking after
+`canary_min_ticks` keeps looking healthy; keep `canary_min_ticks` near the ticks it runs in `canary_hours` if that
+matters to you.
 
 ## Guardrails
 
@@ -52,7 +79,7 @@ ready PR.
 - **No workflows permission.** A push that touches `.github/workflows` fails by design; Warden opens an issue for the
   owner instead.
 - **Guardrails as config.** Protected paths, merge and release policy (`trusted_authors`, `required_checks`,
-  `release = "auto" | "off"`, `max_issues_per_day`) and the budget live in `warden.toml`, which is itself protected.
+  `release = "auto" | "off"`, `canary`, `max_issues_per_day`) and the budget live in `warden.toml`, which is itself protected.
 
 ## Budget and brains
 

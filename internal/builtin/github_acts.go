@@ -556,7 +556,18 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if err != nil {
 		return Result{Summary: "release: " + err.Error()}
 	}
+	switch p["phase"] {
+	case "rc":
+		return tagRC(ctx, c, env, ri, p)
+	case "final":
+		return tagFinal(ctx, c, ri, p)
+	case "failed":
+		return canaryFailed(ctx, c, env, ri, p)
+	}
 	if p["phase"] == "tag" {
+		if canaryName(env) != "" {
+			return refused("refused: the canary gate is on (params.canary): " + p["version"] + " is tagged only after its release candidate ran healthy on the canary")
+		}
 		if ri.Untagged == nil || strings.TrimPrefix(ri.Untagged.Head.Ref, refRelease) != p["version"] || ri.Untagged.MergeCommitSHA != p["sha"] {
 			return Result{OK: true, Summary: "release: nothing to tag (" + p["version"] + ")"}
 		}
@@ -567,6 +578,19 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	}
 	if len(ri.Merged) == 0 || ri.Open != nil {
 		return Result{OK: true, Summary: "release: nothing to do"}
+	}
+	merged, cl := ri.Merged, func(old string) string { return old }
+	if canaryName(env) != "" && ri.Untagged != nil { // a release in flight on the canary
+		v := strings.TrimPrefix(ri.Untagged.Head.Ref, refRelease)
+		switch {
+		case ri.Canary.Failed == "":
+			return Result{OK: true, Summary: "release: nothing to do while " + v + " is on its way through the canary"}
+		case len(ri.Fresh) == 0:
+			return Result{OK: true, Summary: "release: " + ri.RC + " failed on the canary; the next attempt waits for newly merged PRs"}
+		}
+		// a new attempt: the failed version's CHANGELOG section goes back under
+		// [Unreleased] and only the PRs merged since are added to it
+		merged, cl = ri.Fresh, func(old string) string { return unrelease(old, v) }
 	}
 	if ri.Tag == "" {
 		return firstRelease(ctx, c, env, ri)
@@ -585,9 +609,9 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 		return Result{Summary: "release: " + err.Error()}
 	}
 	defer dropWorktree(ctx, root, work, wt)
-	cl := filepath.Join(wt, "CHANGELOG.md")
-	old, _ := os.ReadFile(cl)
-	if err := os.WriteFile(cl, []byte(Changelog(string(old), ri.Tag, ri.Version, env.now(), param(nil, env, "repo", ""), ri.Merged)), 0o644); err != nil {
+	clPath := filepath.Join(wt, "CHANGELOG.md")
+	old, _ := os.ReadFile(clPath)
+	if err := os.WriteFile(clPath, []byte(Changelog(cl(string(old)), ri.Tag, ri.Version, env.now(), param(nil, env, "repo", ""), merged)), 0o644); err != nil {
 		return Result{Summary: "release: " + err.Error()}
 	}
 	if _, err := git(ctx, wt, "add", "CHANGELOG.md"); err != nil {
@@ -600,8 +624,13 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if r, failed := pushOrHandOff(ctx, c, env, wt, branch, 0, []string{"CHANGELOG.md"}, false); failed {
 		return r
 	}
+	then := fmt.Sprintf("then it tags %s on the merge commit and the release workflow builds it", ri.Version)
+	if name := canaryName(env); name != "" {
+		then = fmt.Sprintf("then it tags a release candidate (%s-rc.N) on the merge commit for the canary «%s», and %s on the same commit once the canary ran it healthy for %dh",
+			ri.Version, name, ri.Version, canaryHours(env))
+	}
 	body := fmt.Sprintf("Release %s: CHANGELOG.md from the merged PR titles since %s (no model involved).\n\n%s\n\n"+
-		"Merged by Warden under its rules once CI is green; then it tags %s on the merge commit and the release workflow builds it.\n", ri.Version, or(ri.Tag, "the start"), prList(ri.Merged), ri.Version)
+		"Merged by Warden under its rules once CI is green; %s.\n", ri.Version, or(ri.Tag, "the start"), prList(ri.Merged), then)
 	pr, err := c.CreatePR(ctx, branch, mainBranch(env), title, body, false)
 	if err != nil {
 		return Result{Summary: "release: " + err.Error()}
