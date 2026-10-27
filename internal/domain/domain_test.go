@@ -184,7 +184,9 @@ func TestK8sNamespaceForeachAndMaps(t *testing.T) {
 		t.Fatal(sets, bound)
 	}
 	write := filepath.Join(t.TempDir(), "domain.toml")
-	os.WriteFile(write, []byte("name = \"x\"\n[[act]]\nname = \"a\"\nforeach = { n = \"{ns}\" }\nrun = { cmd = [\"true\"] }\n"), 0o644)
+	if err := os.WriteFile(write, []byte("name = \"x\"\n[[act]]\nname = \"a\"\nforeach = { n = \"{ns}\" }\nrun = { cmd = [\"true\"] }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Load(filepath.Dir(write), nil); err == nil {
 		t.Fatal("foreach on an act must be refused")
 	}
