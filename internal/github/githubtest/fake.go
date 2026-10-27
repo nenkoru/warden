@@ -1,7 +1,7 @@
 // Package githubtest is an in-memory fake of the parts of the GitHub REST
 // API Warden uses, for offline tests: issues, labels, comments, pull
 // requests (files, diff, reviews, merge), check runs and statuses, workflow
-// runs, jobs and logs, refs, tags, branches, contents and two GraphQL
+// runs, jobs and logs, refs, tags, branches, comparisons, contents and two GraphQL
 // mutations. Every request must carry the token; every request body is kept
 // so a test can assert the token never left in one.
 package githubtest
@@ -71,6 +71,9 @@ type Fake struct {
 	ResolveHead func(branch string) string
 	// FilesOf: the changed files of a pushed branch (tests: from the bare remote).
 	FilesOf func(branch string) []string
+	// CommitsOf: the commits of head not on base, oldest first (tests: from
+	// the bare remote); nil answers every comparison 404.
+	CommitsOf func(base, head string) []github.Commit
 }
 
 // New starts the fake; it closes with the test.
@@ -420,6 +423,15 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(201)
 		js(map[string]string{"ref": ref})
+	case strings.HasPrefix(path, "/compare/") && r.Method == "GET":
+		base, head, ok := strings.Cut(strings.TrimPrefix(path, "/compare/"), "...")
+		if !ok || f.CommitsOf == nil {
+			w.WriteHeader(404)
+			js(map[string]string{"message": "Not Found"})
+			return
+		}
+		cs := f.CommitsOf(base, head)
+		js(map[string]any{"ahead_by": len(cs), "commits": cs})
 	case path == "/tags":
 		js(f.Tags)
 	case path == "/branches":

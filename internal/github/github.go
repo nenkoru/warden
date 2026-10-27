@@ -113,6 +113,9 @@ func (c *Client) raw(ctx context.Context, path, accept string) (string, error) {
 }
 
 func (c *Client) send(ctx context.Context, method, path, accept string, body, out any) error {
+	if why := c.Guard(method, path, body); why != "" {
+		return fmt.Errorf("github %s %s: refused by Warden's guard: %s", method, path, why)
+	}
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -521,6 +524,34 @@ type Branch struct {
 func (c *Client) Branches(ctx context.Context) ([]Branch, error) {
 	var bs []Branch
 	return bs, c.do(ctx, "GET", c.repoPath("/branches?per_page=100"), nil, &bs)
+}
+
+// Commit: a commit of a comparison, its sha and full message.
+type Commit struct {
+	SHA    string `json:"sha"`
+	Commit struct {
+		Message string `json:"message"`
+	} `json:"commit"`
+}
+
+// Compare: the commits head has that base does not, oldest first (at most
+// 250, the API's page), and how many there are in all.
+func (c *Client) Compare(ctx context.Context, base, head string) ([]Commit, int, error) {
+	var r struct {
+		AheadBy int      `json:"ahead_by"`
+		Commits []Commit `json:"commits"`
+	}
+	err := c.do(ctx, "GET", c.repoPath("/compare/%s...%s", escRef(base), escRef(head)), nil, &r)
+	return r.Commits, r.AheadBy, err
+}
+
+// escRef: a branch name for a path, its slashes kept.
+func escRef(s string) string {
+	parts := strings.Split(s, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
 }
 
 // FailedLogs: the logs of the failed jobs of the workflow runs on sha, the

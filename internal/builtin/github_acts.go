@@ -568,6 +568,9 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if len(ri.Merged) == 0 || ri.Open != nil {
 		return Result{OK: true, Summary: "release: nothing to do"}
 	}
+	if ri.Tag == "" {
+		return firstRelease(ctx, c, env, ri)
+	}
 	if ri.Breaking {
 		return breakingRelease(ctx, c, env, ri)
 	}
@@ -609,22 +612,37 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 }
 
 func breakingRelease(ctx context.Context, c *github.Client, env *Env, ri releaseInfo) Result {
-	title := "Warden: a breaking change waits for a major release " + ri.Version
+	return ownerRelease(ctx, c, env, "Warden: a breaking change waits for a major release "+ri.Version,
+		fmt.Sprintf("%s: merged since %s includes a breaking change, so the next release is %s. Warden never cuts a major release.\n\n%s\n",
+			ownerMention(env), or(ri.Tag, "the start"), ri.Version, prList(ri.Merged)),
+		fmt.Sprintf("a major version (%s) is the owner's", ri.Version))
+}
+
+// firstRelease: with no tag yet, the first version is the owner's to cut
+// (the CHANGELOG may already name it); from then on Warden cuts patch/minor.
+func firstRelease(ctx context.Context, c *github.Client, env *Env, ri releaseInfo) Result {
+	return ownerRelease(ctx, c, env, "Warden: the first release is yours",
+		fmt.Sprintf("%s: the repository has no release tag yet, so Warden won't pick the first version. Tag it on a green %s "+
+			"(for example `git tag v0.1.0 origin/%s && git push origin v0.1.0`; the release workflow builds it). "+
+			"From then on Warden cuts patch and minor releases from merged PRs.\n\n%s\n",
+			ownerMention(env), mainBranch(env), mainBranch(env), prList(ri.Merged)),
+		"the first release is the owner's")
+}
+
+func ownerRelease(ctx context.Context, c *github.Client, env *Env, title, body, why string) Result {
 	is, err := c.IssuesLabeled(ctx, labelNeedsHuman)
 	if err == nil {
 		for _, i := range is {
 			if i.Title == title {
-				return refused(fmt.Sprintf("release: a major version is the owner's (issue #%d)", i.Number))
+				return refused(fmt.Sprintf("release: %s (issue #%d)", why, i.Number))
 			}
 		}
 	}
-	body := fmt.Sprintf("%s: merged since %s includes a breaking change, so the next release is %s. Warden never cuts a major release.\n\n%s\n",
-		ownerMention(env), or(ri.Tag, "the start"), ri.Version, prList(ri.Merged))
 	i, err := c.CreateIssue(ctx, title, body, labelNeedsHuman)
 	if err != nil {
 		return Result{Summary: "release: " + err.Error()}
 	}
-	return refused(fmt.Sprintf("release: a major version (%s) is the owner's: issue #%d", ri.Version, i.Number))
+	return refused(fmt.Sprintf("release: %s: issue #%d", why, i.Number))
 }
 
 // Changelog: the [Unreleased] section becomes [version] - date, with the
@@ -785,8 +803,8 @@ func pickupBranch(ctx context.Context, c *github.Client, f domain.Finding, env *
 	if b == "" {
 		return Result{Summary: "pickup-branch: no branch"}
 	}
-	title := "chore: changes from " + oneLine(b, 80)
-	body := fmt.Sprintf("Warden opened this for the branch `%s` (a delegate's work). It is merged under Warden's own rules: every required check green, no needs-human label, no protected path.", b)
+	title, lead := pickupText(ctx, c, mainBranch(env), b)
+	body := lead + fmt.Sprintf("Warden opened this for the branch `%s` (a delegate's work). It is merged under Warden's own rules: every required check green, no needs-human label, no protected path.", b)
 	pr, err := c.CreatePR(ctx, b, mainBranch(env), title, body, false)
 	if err != nil {
 		var se *github.StatusError
@@ -797,4 +815,52 @@ func pickupBranch(ctx context.Context, c *github.Client, f domain.Finding, env *
 	}
 	_ = c.AddLabels(ctx, pr.Number, labelWarden, labelDelegated)
 	return Result{OK: true, Summary: fmt.Sprintf("PR #%d opened for branch %s", pr.Number, b)}
+}
+
+// pickupText: the PR's title and the lead of its body, from the branch's
+// commits ahead of base (the release reads merged PR titles, so the title
+// matters): one commit gives its subject and body; several give the oldest
+// subject and a list of every subject. If the comparison fails, the generic
+// title and no lead. Mentions are defused.
+func pickupText(ctx context.Context, c *github.Client, base, b string) (string, string) {
+	generic := "chore: changes from " + oneLine(b, 80)
+	cs, ahead, err := c.Compare(ctx, base, b)
+	if err != nil || len(cs) == 0 {
+		return generic, ""
+	}
+	subject, rest := splitCommit(cs[0].Commit.Message)
+	title := noMention(oneLine(subject, 119))
+	if title == "" {
+		title = generic
+	}
+	lead := rest
+	if len(cs) > 1 {
+		var sb strings.Builder
+		for _, cm := range cs {
+			s, _ := splitCommit(cm.Commit.Message)
+			fmt.Fprintf(&sb, "- %s %s\n", short7(cm.SHA), oneLine(s, 200))
+		}
+		if ahead > len(cs) {
+			fmt.Fprintf(&sb, "- … and %d more\n", ahead-len(cs))
+		}
+		lead = sb.String()
+	}
+	lead = strings.TrimSpace(noMention(reFence.Replace(short(lead, 4000))))
+	if lead != "" {
+		lead += "\n\n"
+	}
+	return title, lead
+}
+
+// splitCommit: a commit message's subject and its body, without
+// Co-Authored-By trailers.
+func splitCommit(msg string) (string, string) {
+	subject, rest, _ := strings.Cut(strings.TrimSpace(msg), "\n")
+	var keep []string
+	for _, l := range strings.Split(rest, "\n") {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(l)), "co-authored-by:") {
+			keep = append(keep, l)
+		}
+	}
+	return subject, strings.TrimSpace(strings.Join(keep, "\n"))
 }

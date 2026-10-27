@@ -31,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Floors `untrusted = "deny"` (a finding carrying untrusted input never drives the act), `needs_brain`, `clean_env`;
   the sandbox can open loopback ports (a local metering proxy) and hide credential files.
 - Instance params accept arrays and tables (passed to packs as JSON).
+- `pickup-branch` titles the PR after the branch's commits (one commit: its subject and body; several: the oldest
+  subject and a list of all), so releases count it right; the generic title stays the fallback.
 
 ### Security
 

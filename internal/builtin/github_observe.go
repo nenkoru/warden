@@ -434,6 +434,9 @@ var (
 // nextVersion: feat/enhancement → minor, anything else → patch; breaking
 // (a label, "type!:" or BREAKING CHANGE) → a major Warden never cuts.
 func nextVersion(tag string, merged []github.PR) (string, bool) {
+	if tag == "" {
+		return "v0.1.0", false // a placeholder: with no tag the first release is the owner's (firstRelease)
+	}
 	v, _ := splitVer(tag)
 	level := 0 // 0 patch, 1 minor, 2 major
 	for _, p := range merged {
@@ -498,6 +501,10 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 			f.Severity, f.Title = "info", title+fmt.Sprintf(" — release PR #%d open", ri.Open.Number)
 		case state != "green":
 			f.Severity, f.Title = "low", title+" — waiting for green main ("+state+")"
+		case ri.Tag == "":
+			f.Title = fmt.Sprintf("%d merged PR(s), no release tag yet: the first release is yours", len(ri.Merged))
+			f.Fix = &domain.Fix{Act: "release", Target: "first", What: "ask the owner to cut the first release (an issue labeled needs-human)",
+				Params: map[string]string{"phase": "pr", "version": ri.Version, "first": "true", "tainted": "false"}}
 		default:
 			f.Fix = &domain.Fix{Act: "release", Target: ri.Version, What: "open the release PR for " + ri.Version + " (CHANGELOG from the merged PR titles)",
 				Params: map[string]string{"phase": "pr", "version": ri.Version, "breaking": strconv.FormatBool(ri.Breaking), "tainted": "false"}}

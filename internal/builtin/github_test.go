@@ -71,6 +71,17 @@ func newWorld(t *testing.T) *ghWorld {
 		f.FilesOf = func(b string) []string {
 			return splitList(strings.ReplaceAll(run(t, dir, "git", "--git-dir", w.bare, "diff", "--name-only", "main..."+b), "\n", ","))
 		}
+		f.CommitsOf = func(base, head string) []github.Commit {
+			var cs []github.Commit
+			for _, rec := range strings.Split(run(t, dir, "git", "--git-dir", w.bare, "log", "--reverse", "--format=%H%x00%B%x1e", base+".."+head), "\x1e") {
+				if sha, msg, ok := strings.Cut(strings.TrimSpace(rec), "\x00"); ok {
+					cm := github.Commit{SHA: sha}
+					cm.Commit.Message = msg
+					cs = append(cs, cm)
+				}
+			}
+			return cs
+		}
 	})
 	w.env = &Env{State: filepath.Join(dir, "state"), Now: func() time.Time { return w.fake.Now },
 		Params: map[string]string{"repo": "acme/proj", "token_file": w.token, "owner": "boss", "api": w.fake.URL(), "root": w.root},
@@ -667,3 +678,110 @@ func TestProtected(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// With no release tag yet the first version is the owner's: an issue, no release PR, no tag.
+func TestFirstReleaseIsTheOwners(t *testing.T) {
+	w := newWorld(t)
+	w.fake.MergedPR("feat: the first thing", "warden/issue-1-x", w.fake.Now.Add(-time.Hour))
+	mainSHA := ""
+	w.fake.With(func(f *githubtest.Fake) { mainSHA = f.Branches["main"] })
+	w.fake.AddRun(github.WorkflowRun{Name: "CI", HeadBranch: "main", HeadSHA: mainSHA, Event: "push", Status: "completed", Conclusion: "success", WorkflowID: 1})
+	f := fixOf(w.observe("github-main"), "release")
+	if f == nil || f.Fix.Params["first"] != "true" || strings.Contains(f.Title, "v0.0.1") {
+		t.Fatalf("first release fix: %+v", f)
+	}
+	r := Act(context.Background(), "release", nil, *f, w.env)
+	if r.OK || !strings.Contains(r.Summary, "first release is the owner's") {
+		t.Fatalf("first release must go to the owner: %+v", r)
+	}
+	if w.ref("warden/release-v0.1.0") != "" || w.ref("warden/release-v0.0.1") != "" {
+		t.Fatal("no release branch for the first release")
+	}
+	again := Act(context.Background(), "release", nil, *f, w.env)
+	if !strings.Contains(again.Summary, "(issue #") {
+		t.Fatalf("the owner's issue is opened once: %+v", again)
+	}
+}
+
+// pushBranch: a branch off main on the remote (and in the fake), one commit
+// per message.
+func (w *ghWorld) pushBranch(b string, msgs ...string) {
+	w.t.Helper()
+	run(w.t, w.root, "git", "checkout", "-q", "-b", b, "origin/main")
+	for i, m := range msgs {
+		_ = os.WriteFile(filepath.Join(w.root, slug(b)+itoa(i)+".txt"), []byte(m), 0o644)
+		run(w.t, w.root, "git", "add", ".")
+		run(w.t, w.root, "git", "commit", "-q", "-m", m)
+	}
+	run(w.t, w.root, "git", "push", "-q", "origin", b)
+	run(w.t, w.root, "git", "checkout", "-q", "main")
+	sha := w.ref(b)
+	w.fake.With(func(f *githubtest.Fake) { f.Branches[b] = sha })
+}
+
+func (w *ghWorld) pickup(b string) github.PR {
+	w.t.Helper()
+	w.env.Params["pickup_branches"] = "claude/"
+	f := fixOf(w.observe("github-prs"), "pickup-branch")
+	if f == nil || f.Fix.Params["branch"] != b {
+		w.t.Fatalf("no pickup fix for %s: %+v", b, f)
+	}
+	r := Act(context.Background(), "pickup-branch", nil, *f, w.env)
+	if !r.OK {
+		w.t.Fatalf("%+v", r)
+	}
+	w.noSecret(r)
+	var pr github.PR
+	w.fake.With(func(f *githubtest.Fake) {
+		for _, p := range f.PRs {
+			if p.Head.Ref == b {
+				pr = p.PR
+			}
+		}
+	})
+	return pr
+}
+
+func TestPickupOneCommit(t *testing.T) {
+	w := newWorld(t)
+	w.pushBranch("claude/greet", "feat(greet): say hello by name\n\nHello takes a name now.\n\nCo-Authored-By: Claude <noreply@anthropic.com>")
+	pr := w.pickup("claude/greet")
+	if pr.Title != "feat(greet): say hello by name" {
+		t.Fatalf("title: %q", pr.Title)
+	}
+	if !strings.HasPrefix(pr.Body, "Hello takes a name now.\n\nWarden opened this for the branch `claude/greet`") || strings.Contains(pr.Body, "Co-Authored-By") {
+		t.Fatalf("body: %q", pr.Body)
+	}
+}
+
+func TestPickupSeveralCommits(t *testing.T) {
+	w := newWorld(t)
+	w.pushBranch("claude/multi", "feat: the first part\n\ndetails", "fix: the second part", "docs: the third part")
+	pr := w.pickup("claude/multi")
+	if pr.Title != "feat: the first part" {
+		t.Fatalf("title: %q", pr.Title)
+	}
+	i1, i2, i3 := strings.Index(pr.Body, "feat: the first part"), strings.Index(pr.Body, "fix: the second part"), strings.Index(pr.Body, "docs: the third part")
+	if i1 < 0 || i2 < i1 || i3 < i2 || strings.Contains(pr.Body, "details") || !strings.HasSuffix(pr.Body, "no protected path.") {
+		t.Fatalf("body: %q", pr.Body)
+	}
+}
+
+func TestPickupCompareFails(t *testing.T) {
+	w := newWorld(t)
+	w.fake.With(func(f *githubtest.Fake) { f.CommitsOf = nil })
+	w.pushBranch("claude/x", "feat: something")
+	pr := w.pickup("claude/x")
+	if pr.Title != "chore: changes from claude/x" || !strings.HasPrefix(pr.Body, "Warden opened this") {
+		t.Fatalf("fallback: %q %q", pr.Title, pr.Body)
+	}
+}
+
+func TestPickupDefusesMentions(t *testing.T) {
+	w := newWorld(t)
+	w.pushBranch("claude/ping", "feat: thanks @alice "+strings.Repeat("long ", 40)+"\n\ncc @acme/team")
+	pr := w.pickup("claude/ping")
+	if strings.Contains(pr.Title, "@a") || strings.Contains(pr.Body, "@a") || !strings.Contains(pr.Title, "@\u200balice") || len(pr.Title) > 130 {
+		t.Fatalf("mentions: %q %q", pr.Title, pr.Body)
+	}
+}
