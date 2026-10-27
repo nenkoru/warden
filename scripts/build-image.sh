@@ -8,6 +8,7 @@
 #   ARCH=amd64|arm64     target architecture (default amd64)
 #   KUBECTL=v1.30.14     kubectl version; KUBECTL=none leaves it out
 #   EXTRA_BINS="a b"     more binaries to copy into /usr/local/bin (verify them yourself)
+#   APK_PACKAGES="git=2.45.4-r0"  pinned Alpine packages to add (the github-repo pack needs git)
 #   VERSION=v0.1.0       the version baked into the binary (default: git describe)
 #   PUSH=1               docker push the image and print its digest
 set -eu
@@ -27,7 +28,7 @@ for b in ${EXTRA_BINS:-}; do
 done
 chmod +x "$CTX"/bin/*
 cp -R "$HERE/packs" "$CTX/packs"
-docker build --platform "linux/$ARCH" -f "$HERE/deploy/Dockerfile" -t "$IMAGE" "$CTX"
+docker build --platform "linux/$ARCH" --build-arg APK_PACKAGES="${APK_PACKAGES:-}" -f "$HERE/deploy/Dockerfile" -t "$IMAGE" "$CTX"
 if [ "${PUSH:-0}" = 1 ]; then
 	docker push "$IMAGE"
 	docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE"
