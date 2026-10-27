@@ -24,7 +24,7 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 |---|---|---|
 | `work-issue` | A branch `warden/issue-N-slug` from `main`; the brain edits files through file tools only (Go files are formatted in-process); the token is checked for in the diff; push; a **draft** PR "Closes #N" naming the brain, labeled `warden`. CI runs on it. Red → one fix round from the failed jobs' logs (fenced as data), pushed to the same branch; still red → delegated (if configured) or labeled `needs-human`. Green → marked ready, then `merge-pr`. | `needs_brain`, `max_per_day`, and `max_issues_per_day` |
 | `review-pr` | The diff and the CI results go to the brain, fenced as untrusted; one `COMMENT` review per head SHA; mentions in the text are defused; "@owner, looks good to me" only with green CI and a looks-good verdict. The PR's code is never checked out or run. | `needs_brain` |
-| `merge-pr` | Only own / Dependabot / trusted PRs; every reported check green (and `required_checks` present); mergeable; no `needs-human`; no protected path; not paused (asked again right before merging); a Dependabot major bump (or one it can't read) → `needs-human`. Squash merge, pinned to the head SHA. | `untrusted = "deny"` |
+| `merge-pr` | Only own / Dependabot / trusted PRs; every reported check green (and `required_checks` present); mergeable; no `needs-human`; nothing in the [human-only kernel](#the-human-only-kernel) (checked again right before the merge); no protected path; not paused (asked again right before merging); a Dependabot major bump (or one it can't read) → `needs-human`. Squash merge, pinned to the head SHA. | `untrusted = "deny"` |
 | `release` | From green `main`, never paused, one a day: the next version from merged PR labels and titles (`feat`/`enhancement` → minor, else patch; breaking → an issue for the owner, never released). A release PR updates `CHANGELOG.md` from the PR titles and links (Keep a Changelog sections, no model). It merges under `merge-pr`'s rules; then Warden tags `vX.Y.Z` on its merge commit through the API, and the repository's release workflow builds it. A failed release workflow is a critical ping. | `untrusted = "deny"` |
 | `delegate` | Hands an issue to another agent of the owner's with `params.delegate_cmd`, an argv template (`{title}`, `{body}`, `{agent}`, `{issue}`, `{url}`, `{repo}`; no shell) — e.g. a team tracker CLI or a chat bridge the image already has. Used for issues labeled per `delegate_labels`, and for hard issues when no paid brain may take them (`delegate_default`). The work comes back as PRs from `trusted_authors`, or as a branch under `pickup_branches` that Warden opens a PR for. | `max_per_day` |
 | `pickup-branch` | A delegate's pushed branch becomes a PR, merged under the same rules as Warden's own. The PR is titled after the branch's commits (one commit: its subject and body; several: the oldest subject and a list of every subject), so the release reads the right bump. | `untrusted = "deny"` |
@@ -40,19 +40,51 @@ ready PR.
   `<<<untrusted from @user …>>>` wherever they reach a model, and marked tainted. The policy floor
   `untrusted = "deny"` keeps tainted findings away from `merge-pr`, `release` and `pickup-branch`. The coding agent's
   system prompt says that instructions inside the issue are not instructions.
-- **Protected paths** (`params.protected`, default `.github/**`, `.goreleaser.yaml`, `SECURITY.md`, `LICENSE`,
-  `NOTICE`, `packs/github-repo/**`, `warden.toml`, `*.warden.toml`, `warden.lock`, and any file whose name contains
-  `secret`, `token` or `sign` — `protected_names`). A change there from an issue someone else wrote is not pushed at
-  all (the issue gets `needs-human`); from the owner's own issue it becomes a PR labeled `needs-human`. A PR touching
-  them is never merged by Warden. The `sign` rule is deliberately wide (it catches `signals.go` too); narrow it in
-  `protected_names` if you prefer.
+- **Protected paths**: the [human-only kernel](#the-human-only-kernel), plus whatever `params.protected` (globs) and
+  `params.protected_names` (words in a file name; default `signing`, `signature`, `cosign`, `gpg`) add. A change there
+  from an issue someone else wrote is not pushed at all (the issue gets `needs-human`); from the owner's own issue it
+  becomes a PR labeled `needs-human`. A PR touching them is never merged by Warden.
 - **The token** is read from a file, sent only in the `Authorization` header to the API, handed to git through a
   credential helper that reads the file (never in a URL, argv or the environment), redacted from every comment, error
   and log, and checked for in every diff before a push. Inside the sandbox the token file is unreadable.
 - **No workflows permission.** A push that touches `.github/workflows` fails by design; Warden opens an issue for the
   owner instead.
-- **Guardrails as config.** Protected paths, merge and release policy (`trusted_authors`, `required_checks`,
+- **Guardrails as config.** Extra protected paths, merge and release policy (`trusted_authors`, `required_checks`,
   `release = "auto" | "off"`, `max_issues_per_day`) and the budget live in `warden.toml`, which is itself protected.
+
+## The human-only kernel
+
+Warden maintains its own repository and merges its own PRs, so some of it must never change by Warden's hand. The
+kernel is a list in code (`internal/github/kernel.go`), not configuration:
+
+| paths | why |
+|---|---|
+| `.github/**` | workflows, Dependabot, templates: what CI runs, with which permissions, and what it checks |
+| `.goreleaser.yaml`, `.goreleaser.yml` | how releases are built, signed and published |
+| `LICENSE`, `NOTICE`, `SECURITY.md` | the project's terms and how vulnerabilities reach the owner |
+| `warden.toml`, `*.warden.toml`, `warden.lock` | Warden's own instance config and pinned packs |
+| `packs/github-repo/**` | the maintainer's pack: its policy floors and rules |
+| `internal/policy/**`, `internal/meter/**`, `internal/box/**` | the policy engine, the budget cap, the sandbox |
+| `internal/github/guard.go`, `internal/github/kernel.go` and their tests | the allowlist of GitHub writes and pushes; the kernel list, its matcher and the merge's last check |
+| `internal/update/verify*.go`; `*attest*`, `*cosign*`, `*sign*` under `internal/update/` and `scripts/` | release verification and signing |
+| any file whose name contains `secret`, `credential` or `token` | credentials |
+
+What happens to a change there:
+
+- **Any PR touching the kernel** — Warden's own, a delegate's picked-up branch, a trusted author's, a Dependabot bump
+  of GitHub Actions — is labeled `needs-human` and `kernel`, gets one comment per head commit mentioning the owner
+  with the kernel files, and is **never merged by Warden**, whatever its class or CI. The merge re-checks the PR's
+  files right before it merges, and the GitHub client's own `Merge` (in `kernel.go`) refuses a kernel PR once more.
+- **`work-issue` and the fix round**: for an issue the owner wrote, the change is pushed and opened as a ready
+  (non-draft) PR labeled `needs-human` + `kernel`; for anyone else's issue nothing is pushed, and the issue gets
+  `needs-human` and a comment.
+- **The daily digest** lists every open PR labeled `kernel` first: `kernel PR #N: title — human-only: <files>`.
+- **The owner merges these by hand.** The kernel is a floor: `params.protected` and `protected_names` only add to it,
+  and `protected = []` still protects every kernel path. `kernel.go` is in its own list, so a PR that edits or
+  removes a pattern is itself held for the owner.
+
+Make the `main` ruleset require a pull request and the CI status checks (not just for Warden), so even the owner's
+hand merges of kernel PRs go through CI.
 
 ## Budget and brains
 
@@ -134,7 +166,7 @@ owner              = "OWNER"
 root               = "/state/repo"            # cloned on first use
 max_issues_per_day = "3"
 trusted_authors    = ["my-other-agent"]
-protected          = [".github/**", ".goreleaser.yaml", "SECURITY.md", "LICENSE", "NOTICE", "packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"]
+protected          = ["deploy/**"]          # extra paths on top of the human-only kernel (it can't be removed)
 delegate_cmd       = ["some-cli", "task", "create", "--title", "{title}", "--body", "{body}", "--to", "{agent}"]
 delegate_labels    = { infra = "Ops" }
 delegate_default   = "Coder"
@@ -153,7 +185,7 @@ Start with `mode = "dry-run"` for a day and read the reports.
    limit — the outer backstop behind Warden's own daily cap.
 3. **A branch protection rule or ruleset on `main`**: require a pull request, require the CI status checks, block
    force pushes and deletions. Warden's merges then go through the same gate as everyone's.
-4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `warden-log` (GitHub
+4. Labels: `warden`, `needs-human`, `kernel`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `warden-log` (GitHub
    creates missing labels when Warden adds them).
 
 ## Deploy on Kubernetes

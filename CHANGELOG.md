@@ -28,6 +28,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the price table), a Claude Code ACP brain through the meter's local proxy; over the cap no paid model is called and
   brain acts are refused; alerts ping at once; every report header says `model spend today: $X of $Y`.
 - `digest = "daily"`: a `Digest` hook event once a day with the day's summary.
+- The human-only kernel of the `github-repo` pack (`internal/github/kernel.go`): CI and release configuration,
+  licensing, Warden's config and pack, the policy engine, the budget meter, the sandbox, the GitHub guard, the kernel
+  list itself and anything named after secrets, credentials or tokens. A PR touching it is labeled `needs-human` +
+  `kernel`, the owner is told once per head commit, and Warden never merges it, whoever wrote it (own, delegate,
+  trusted, Dependabot); the merge re-checks right before merging and the client's `Merge` refuses it too. The owner's
+  issues that need a kernel change get a ready PR; anyone else's push nothing. The daily digest lists open kernel PRs.
+  `params.protected` / `protected_names` now only add to it (`protected = []` still protects the kernel).
 - Floors `untrusted = "deny"` (a finding carrying untrusted input never drives the act), `needs_brain`, `clean_env`;
   the sandbox can open loopback ports (a local metering proxy) and hide credential files.
 - Instance params accept arrays and tables (passed to packs as JSON).

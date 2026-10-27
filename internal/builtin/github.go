@@ -232,12 +232,12 @@ func slug(s string) string {
 
 // ---- protected paths
 
-// DefaultProtected: paths no automatic change may touch without the owner.
-var DefaultProtected = []string{".github/**", ".goreleaser.yaml", ".goreleaser.yml", "SECURITY.md", "LICENSE", "NOTICE",
-	"packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"}
+// The human-only kernel (github.Kernel, github.KernelNames) is always
+// protected; params.protected and params.protected_names only add to it.
 
-// DefaultProtectedNames: any file whose name contains one of these.
-var DefaultProtectedNames = []string{"secret", "token", "credential", "signing", "signature", "cosign", "gpg"} // not "sign": signals.go, DESIGN.md
+// DefaultProtectedNames: words protected on top of the kernel's when
+// params.protected_names is unset.
+var DefaultProtectedNames = []string{"signing", "signature", "cosign", "gpg"} // not "sign": signals.go, DESIGN.md
 
 // Protected: the files among changed that match a protected pattern (globs
 // with ** across folders) or whose base name contains a protected word.
@@ -247,7 +247,7 @@ func Protected(changed, patterns, names []string) []string {
 		f = strings.TrimPrefix(filepath.ToSlash(f), "./")
 		hit := false
 		for _, p := range patterns {
-			if globPath(strings.TrimPrefix(p, "/"), f) {
+			if github.Glob(p, f) {
 				hit = true
 				break
 			}
@@ -266,47 +266,21 @@ func Protected(changed, patterns, names []string) []string {
 	return out
 }
 
+// protectedFor: the kernel files among changed plus what the params add;
+// nothing in the config removes a kernel path.
 func protectedFor(env *Env, changed []string) []string {
-	pats := listParam(env, "protected")
-	if len(pats) == 0 {
-		pats = DefaultProtected
-	}
 	names := DefaultProtectedNames
 	if v, ok := env.Params["protected_names"]; ok {
 		names = splitList(v)
 	}
-	return Protected(changed, pats, names)
-}
-
-// globPath: path.Match per segment; "**" matches any number of segments; a
-// pattern without "/" matches the base name anywhere ("*.warden.toml").
-func globPath(pat, p string) bool {
-	if !strings.Contains(pat, "/") {
-		ok, _ := path.Match(pat, path.Base(p))
-		return ok
+	out := github.KernelFiles(changed)
+	for _, f := range Protected(changed, listParam(env, "protected"), names) {
+		if !slices.Contains(out, f) {
+			out = append(out, f)
+		}
 	}
-	return globSegs(strings.Split(pat, "/"), strings.Split(p, "/"))
-}
-
-func globSegs(ps, ss []string) bool {
-	for len(ps) > 0 {
-		if ps[0] == "**" {
-			for i := 0; i <= len(ss); i++ {
-				if globSegs(ps[1:], ss[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(ss) == 0 {
-			return false
-		}
-		if ok, _ := path.Match(ps[0], ss[0]); !ok {
-			return false
-		}
-		ps, ss = ps[1:], ss[1:]
-	}
-	return len(ss) == 0
+	sort.Strings(out)
+	return out
 }
 
 // ---- small state (daily counters) under <state>/github

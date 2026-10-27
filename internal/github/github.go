@@ -468,20 +468,7 @@ func (c *Client) Review(ctx context.Context, n int, sha, body string) error {
 	return c.do(ctx, "POST", c.repoPath("/pulls/%d/reviews", n), map[string]string{"commit_id": sha, "body": c.Redact(body), "event": "COMMENT"}, nil)
 }
 
-// Merge squash-merges a PR whose head is still sha.
-func (c *Client) Merge(ctx context.Context, n int, sha, title string) (string, error) {
-	var r struct {
-		SHA    string `json:"sha"`
-		Merged bool   `json:"merged"`
-	}
-	if err := c.do(ctx, "PUT", c.repoPath("/pulls/%d/merge", n), map[string]string{"sha": sha, "merge_method": "squash", "commit_title": title}, &r); err != nil {
-		return "", err
-	}
-	if !r.Merged {
-		return "", fmt.Errorf("github: PR #%d was not merged", n)
-	}
-	return r.SHA, nil
-}
+// Merge: see kernel.go (the merge re-checks the kernel there).
 
 func (c *Client) CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) {
 	var p PR

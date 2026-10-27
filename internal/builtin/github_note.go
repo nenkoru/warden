@@ -60,6 +60,9 @@ func GitHubNote(ctx context.Context, params map[string]string, event string, pay
 			fmt.Fprintf(&b, "%s\n\n", s)
 		}
 		lines := list("lines")
+		if kl, err := KernelPRs(ctx, c); err == nil { // the kernel PRs waiting for the owner come first
+			lines = append(kl, lines...)
+		}
 		if len(lines) == 0 {
 			b.WriteString("A quiet day.\n")
 		}

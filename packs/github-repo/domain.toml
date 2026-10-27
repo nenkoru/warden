@@ -3,8 +3,11 @@
 # trusted delegates' merged on green CI, patch/minor releases cut from merged
 # PR titles. Hard limits in code: the kill switch (a `warden-pause` label or a
 # PAUSE file on main) is read first every tick; issue and PR text is untrusted
-# data and never drives a merge or a release; protected paths always go to the
-# owner (needs-human); external code never runs here; a daily model budget.
+# data and never drives a merge or a release; the human-only kernel (CI,
+# release config, this pack, Warden's config, policy, budget, sandbox, guard;
+# internal/github/kernel.go) and other protected paths always go to the owner
+# (needs-human), never merged by Warden; external code never runs here; a
+# daily model budget.
 # The token comes from a file (a fine-grained PAT for this one repository,
 # without the workflows or administration permissions).
 name        = "github-repo"
@@ -20,8 +23,8 @@ branch      = "main"
 checks_mode = "ci"                       # ci: no repository code runs here, CI decides; local: run `checks` in the sandbox
 checks      = '["go vet ./...", "go test -race -count=1 ./...", "GOLANGCI_LINT_CACHE=$TMPDIR/golangci golangci-lint run ./..."]'
 required_checks    = ""                  # check names that must be present and green (default: every reported check green)
-protected          = '[".github/**", ".goreleaser.yaml", ".goreleaser.yml", "SECURITY.md", "LICENSE", "NOTICE", "packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"]'
-protected_names    = "secret,token,credential,signing,signature,cosign,gpg" # any file whose name contains one of these
+protected          = ""                  # extra globs on top of the human-only kernel (which no config removes)
+protected_names    = "signing,signature,cosign,gpg" # extra words in a file name (secret, credential, token are kernel)
 max_issues_per_day = "3"
 trusted_authors    = ""                  # logins whose PRs merge under Warden's own rules (the owner's other agents)
 release            = "auto"              # auto | off
