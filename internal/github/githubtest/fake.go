@@ -68,17 +68,20 @@ type Fake struct {
 	// CommentAssoc: author associations by comment ID (default: OWNER for
 	// Login, NONE for anyone else).
 	CommentAssoc map[int64]string
-	Releases     []github.Release
-	Assets       map[int64][]byte                // asset ID → content
-	Attests      map[string][]github.Attestation // "sha256:hex" → attestations
-	Anonymous    bool                            // GET requests without a token are served
-	Reviews      []Review
-	Merged       []int
-	Refs         map[string]string // refs created through the API → sha
-	Bodies       []string          // every request body
-	Requests     []string          // "METHOD path"
-	Ready        []int             // PRs marked ready for review
-	next         int
+	// CommentAt: updated_at by comment ID, set to Now on create and edit
+	// (default: Now).
+	CommentAt map[int64]time.Time
+	Releases  []github.Release
+	Assets    map[int64][]byte                // asset ID → content
+	Attests   map[string][]github.Attestation // "sha256:hex" → attestations
+	Anonymous bool                            // GET requests without a token are served
+	Reviews   []Review
+	Merged    []int
+	Refs      map[string]string // refs created through the API → sha
+	Bodies    []string          // every request body
+	Requests  []string          // "METHOD path"
+	Ready     []int             // PRs marked ready for review
+	next      int
 	// ResolveHead: the sha of a pushed branch (tests: from the bare remote).
 	ResolveHead func(branch string) string
 	// FilesOf: the changed files of a pushed branch (tests: from the bare remote).
@@ -93,7 +96,7 @@ func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
 		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
-		Comments: map[int][]string{}, Refs: map[string]string{}, CommentBy: map[int64]string{}, CommentAssoc: map[int64]string{}, Assets: map[int64][]byte{},
+		Comments: map[int][]string{}, Refs: map[string]string{}, CommentBy: map[int64]string{}, CommentAssoc: map[int64]string{}, CommentAt: map[int64]time.Time{}, Assets: map[int64][]byte{},
 		Attests: map[string][]github.Attestation{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
@@ -183,6 +186,7 @@ func (f *Fake) AddComment(n int, author, body string) int64 {
 	f.Comments[n] = append(f.Comments[n], body)
 	id := commentID(n, len(f.Comments[n])-1)
 	f.CommentBy[id] = author
+	f.CommentAt[id] = f.Now
 	return id
 }
 
@@ -297,6 +301,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case m[2] == "comments" && r.Method == "POST":
 			f.Comments[n] = append(f.Comments[n], str(in["body"]))
+			f.CommentAt[commentID(n, len(f.Comments[n])-1)] = f.Now
 			w.WriteHeader(201)
 			js(map[string]any{"id": commentID(n, len(f.Comments[n])-1)})
 		case m[2] == "comments":
@@ -327,6 +332,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.Method == "PATCH" {
 			f.Comments[n][i] = str(in["body"])
+			f.CommentAt[id] = f.Now
 		}
 		js(f.comment(n, i, f.Comments[n][i]))
 	case path == "/releases":
@@ -544,7 +550,11 @@ func (f *Fake) comment(n, i int, body string) github.Comment {
 	if a := f.CommentAssoc[id]; a != "" {
 		assoc = a
 	}
-	return github.Comment{ID: id, Body: body, User: github.User{Login: by}, AuthorAssociation: assoc}
+	at, ok := f.CommentAt[id]
+	if !ok {
+		at = f.Now
+	}
+	return github.Comment{ID: id, Body: body, User: github.User{Login: by}, AuthorAssociation: assoc, UpdatedAt: at}
 }
 
 func str(v any) string { s, _ := v.(string); return s }

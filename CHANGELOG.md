@@ -53,7 +53,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   commit. A rollback of the rc on the canary, or an open `warden-rollback` issue naming it, stops it: a `rollback`
   finding that pings, a `needs-human` issue "release vX.Y.Z-rc.N failed on the canary" (once), and the next attempt
   waits for newly merged PRs (a new release PR folds the unshipped CHANGELOG section back in; a new rc number on its
-  merge). rc tags are never "the latest release"; one in flight holds the next release PR. The report says
+  merge). rc tags are never "the latest release"; one in flight holds the next release PR. A beacon whose comment
+  was not rewritten for `canary_stale_hours` (default 3; its `updated_at`) is a silent canary: "canary silent since
+  …", no final tag. The report says
   "release vX.Y.Z: rc.N on the canary «name» since …, healthy N h of 24". Without `canary` nothing changes.
 - The release workflow builds the pushed tag (`GORELEASER_CURRENT_TAG`), and goreleaser sorts `-rc.N` before its
   release (`git.prerelease_suffix`): an rc and its release share a commit.

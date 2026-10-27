@@ -106,7 +106,8 @@ release straight away. After the release PR merges it tags `vX.Y.Z-rc.N` on the 
 publishes it as a prerelease, which only `channel = "canary"` instances take. The canary installs it, verifies it like
 any release and reports on its beacon. When that beacon — written by the maintainer's token user or the owner, nobody
 else counts — says the canary runs the rc, healthy for the maintainer's `canary_hours` (default 24) and at least
-`canary_min_ticks` (default 6) ticks, without a rollback, and `main` is green, the maintainer tags `vX.Y.Z` on the same
+`canary_min_ticks` (default 6) ticks, without a rollback, its beacon written within `canary_stale_hours` (default 3),
+and `main` is green, the maintainer tags `vX.Y.Z` on the same
 commit; that final release is what the stable channel takes (after its own `canary_hours` from publishing, which may
 now be short). A rollback of the rc on the canary — or an open `warden-rollback` issue naming it — means no final tag,
 a ping, an issue for the owner, and a new attempt only after new PRs are merged. See

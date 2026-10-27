@@ -57,9 +57,9 @@ second release PR is opened. Without `canary` the release act tags `vX.Y.Z` dire
 create `refs/tags/vX.Y.Z` and `refs/tags/vX.Y.Z-rc.N` and no other ref. Releases are published, not drafts
 (`release.draft: false`): self-update cannot see drafts, and the canary replaces the review of one.
 
-A beacon is rewritten at most hourly and carries no timestamp of its own, so a canary that stops ticking after
-`canary_min_ticks` keeps looking healthy; keep `canary_min_ticks` near the ticks it runs in `canary_hours` if that
-matters to you.
+A ticking canary rewrites its beacon at least hourly, and the gate reads the comment's `updated_at`: a beacon older
+than `canary_stale_hours` (default 3) is a canary that stopped ticking — "release vX.Y.Z: rc.N on the canary «name»:
+canary silent since …", a medium finding, and no final tag until the beacon is written again.
 
 ## Guardrails
 

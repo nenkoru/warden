@@ -28,6 +28,7 @@ release            = "auto"              # auto | off
 canary             = ""                  # a fleet instance (update.channel = "canary"): tag vX.Y.Z-rc.N first, vX.Y.Z on the same commit once it ran healthy
 canary_hours       = "24"                # how long the canary runs the rc healthy before the final tag
 canary_min_ticks   = "6"                 # and at least this many healthy ticks (its beacon on the "Warden fleet" issue)
+canary_stale_hours = "3"                 # a beacon not rewritten for this long is a silent canary: no final tag
 small_labels       = ""                  # default: small, good first issue, docs, chore, dependencies
 delegate_cmd       = ""                  # an argv template (JSON array) handing an issue to another agent: {title} {body} {agent} {issue} {url} {repo}
 delegate_labels    = ""                  # label → agent, e.g. { infra = "Ops" }

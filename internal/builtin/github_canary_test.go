@@ -163,6 +163,7 @@ func TestCanaryGate(t *testing.T) {
 	}
 	w.fake.With(func(f *githubtest.Fake) {
 		f.Comments[fleet][2] = beaconComment("buvg01", "v0.2.0-rc.1", "", f.Now.Add(-25*time.Hour), 8)
+		f.CommentAt[own] = f.Now // the canary rewrote its beacon just now
 	})
 	// healthy enough, but main is red: waiting
 	w.fake.With(func(f *githubtest.Fake) { f.Runs[0].Conclusion = "failure" })
@@ -183,6 +184,46 @@ func TestCanaryGate(t *testing.T) {
 		t.Fatalf("the final tag is not on the rc's commit: %v", refs)
 	}
 	w.noSecret(r)
+}
+
+// A canary that stopped ticking: its last beacon says healthy for long
+// enough, but it is older than canary_stale_hours — no final tag.
+func TestCanarySilent(t *testing.T) {
+	w, rel := canaryWorld(t)
+	mc := "m" + itoa(rel)
+	f := fixOf(w.observe("github-main"), "release")
+	if r := Act(context.Background(), "release", nil, *f, w.env); !r.OK {
+		t.Fatalf("rc tag: %+v", r)
+	}
+	fleet := w.fake.AddIssue("Warden fleet", "", "warden-bot", "OWNER", "warden-fleet")
+	id := w.fake.AddComment(fleet, "warden-bot", beaconComment("buvg01", "v0.2.0-rc.1", "", w.fake.Now.Add(-30*time.Hour), 30))
+	if f = fixOf(w.observe("github-main"), "release"); f == nil || f.Fix.Params["phase"] != "final" {
+		t.Fatalf("a fresh healthy beacon: %+v", f)
+	}
+	w.at(3*time.Hour + time.Minute) // the default canary_stale_hours is 3
+	fs := w.observe("github-main")
+	s := findingKey(fs, "release-canary|")
+	if fixOf(fs, "release") != nil || s == nil || s.Severity != "medium" ||
+		!strings.Contains(s.Title, "canary silent since 2026-10-27 12:00 UTC") || !strings.Contains(s.Detail, "still running") {
+		t.Fatalf("a silent canary: %+v", fs)
+	}
+	// the final tag the fix proposed earlier is deferred, not taken
+	if r := Act(context.Background(), "release", nil, domain.Finding{Fix: f.Fix}, w.env); !r.Deferred || !strings.Contains(r.Summary, "canary silent since") {
+		t.Fatalf("final tag on a silent canary: %+v", r)
+	}
+	if refs := w.refs(); refs["refs/tags/v0.2.0"] != "" {
+		t.Fatalf("tagged on a silent canary: %v", refs)
+	}
+	// a longer canary_stale_hours tolerates it; the beacon written again revives it
+	w.env.Params["canary_stale_hours"] = "6"
+	if f = fixOf(w.observe("github-main"), "release"); f == nil || f.Fix.Params["sha"] != mc {
+		t.Fatalf("canary_stale_hours=6: %+v", f)
+	}
+	w.env.Params["canary_stale_hours"] = "1"
+	w.fake.With(func(f *githubtest.Fake) { f.CommentAt[id] = f.Now })
+	if f = fixOf(w.observe("github-main"), "release"); f == nil || f.Fix.Params["phase"] != "final" {
+		t.Fatalf("a rewritten beacon: %+v", f)
+	}
 }
 
 // A rollback of the rc on the canary: no final tag, the owner told once,

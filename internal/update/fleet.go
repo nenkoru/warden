@@ -36,6 +36,7 @@ type Beacon struct {
 	RolledBack   string    `json:"rolled_back,omitempty"`
 	Author       string    `json:"-"` // the comment's author
 	Comment      int64     `json:"-"`
+	Updated      time.Time `json:"-"` // the comment's updated_at: when the instance last wrote it
 }
 
 var reBeacon = regexp.MustCompile(`<!-- warden-fleet (\{[^\n]{1,1000}?\}) -->`)
@@ -209,7 +210,7 @@ func FleetStatus(ctx context.Context, c *github.Client) ([]Beacon, error) {
 			if !ok || !trusted {
 				continue
 			}
-			b.Author, b.Comment = cm.User.Login, cm.ID
+			b.Author, b.Comment, b.Updated = cm.User.Login, cm.ID, cm.UpdatedAt
 			out = append(out, b)
 		}
 	}

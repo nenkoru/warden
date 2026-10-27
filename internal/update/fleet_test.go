@@ -61,6 +61,7 @@ func TestBeacon(t *testing.T) {
 		t.Fatal("rewritten within the hour")
 	}
 	w.now = w.now.Add(time.Hour)
+	w.f.With(func(f *githubtest.Fake) { f.Now = w.now }) // the comment's updated_at
 	w.begin()
 	if err := w.u.End(ctx, true); err != nil {
 		t.Fatal(err)
@@ -82,7 +83,8 @@ func TestBeacon(t *testing.T) {
 		t.Fatal(err)
 	}
 	bs, err := FleetStatus(ctx, w.u.Beacon)
-	if err != nil || len(bs) != 1 || bs[0].Name != "mac" || bs[0].Version != "v0.2.0" || bs[0].TicksOK != 3 || bs[0].Author != "bot" {
+	if err != nil || len(bs) != 1 || bs[0].Name != "mac" || bs[0].Version != "v0.2.0" || bs[0].TicksOK != 3 || bs[0].Author != "bot" ||
+		!bs[0].Updated.Equal(w.now) {
 		t.Fatalf("%+v %v", bs, err)
 	}
 }

@@ -317,10 +317,11 @@ type Tag struct {
 }
 
 type Comment struct {
-	ID                int64  `json:"id"`
-	Body              string `json:"body"`
-	User              User   `json:"user"`
-	AuthorAssociation string `json:"author_association"`
+	ID                int64     `json:"id"`
+	Body              string    `json:"body"`
+	User              User      `json:"user"`
+	AuthorAssociation string    `json:"author_association"`
+	UpdatedAt         time.Time `json:"updated_at"` // the last edit (or creation)
 }
 
 // Release: a GitHub release and its assets.

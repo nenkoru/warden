@@ -35,6 +35,11 @@ func canaryName(env *Env) string { return oneLine(param(nil, env, "canary", ""),
 func canaryHours(env *Env) int    { return max(intParam(env, "canary_hours", 24), 0) }
 func canaryMinTicks(env *Env) int { return max(intParam(env, "canary_min_ticks", 6), 1) }
 
+// canaryStaleHours: a beacon not rewritten for this long (canary_stale_hours,
+// default 3; the beacon is rewritten at least hourly while the canary ticks)
+// is a canary that stopped ticking — its health no longer counts.
+func canaryStaleHours(env *Env) int { return max(intParam(env, "canary_stale_hours", 3), 1) }
+
 // rcOf: for version v, the rc tag on sha ("" = none) and the rc to cut next
 // (rc numbers only go up, across attempts on different commits).
 func rcOf(tags []github.Tag, v, sha string) (on, next string) {
@@ -75,7 +80,9 @@ type canaryInfo struct {
 	Healthy  time.Duration  // since its healthy_since on the rc
 	Hours    int            // canary_hours
 	MinTicks int            // canary_min_ticks
+	Stale    int            // canary_stale_hours
 	Failed   string         // why the rc failed ("" = it did not)
+	Silent   bool           // the canary's beacon is older than canary_stale_hours
 	Ready    bool           // healthy long enough: the final tag may go on
 }
 
@@ -83,7 +90,7 @@ type canaryInfo struct {
 // login or the owner (anyone may comment on a public issue) — and the open
 // warden-rollback issues.
 func canaryState(ctx context.Context, c *github.Client, env *Env, rc, sha string) (canaryInfo, error) {
-	ci := canaryInfo{Name: canaryName(env), RC: rc, SHA: sha, Hours: canaryHours(env), MinTicks: canaryMinTicks(env)}
+	ci := canaryInfo{Name: canaryName(env), RC: rc, SHA: sha, Hours: canaryHours(env), MinTicks: canaryMinTicks(env), Stale: canaryStaleHours(env)}
 	rb, err := c.IssuesLabeled(ctx, update.RollbackLabel)
 	if err != nil {
 		return ci, err
@@ -124,7 +131,10 @@ func canaryState(ctx context.Context, c *github.Client, env *Env, rc, sha string
 			ci.Beacon, ci.Running, ci.Healthy = b, true, healthy
 		}
 	}
-	ci.Ready = ci.Running && ci.Healthy >= time.Duration(ci.Hours)*time.Hour && ci.Beacon.TicksOK >= ci.MinTicks
+	if ci.Running {
+		ci.Silent = ci.Beacon.Updated.IsZero() || env.now().Sub(ci.Beacon.Updated) > time.Duration(ci.Stale)*time.Hour
+	}
+	ci.Ready = ci.Running && !ci.Silent && ci.Healthy >= time.Duration(ci.Hours)*time.Hour && ci.Beacon.TicksOK >= ci.MinTicks
 	return ci, nil
 }
 
@@ -133,6 +143,12 @@ func (ci canaryInfo) line(v string) string {
 	switch {
 	case ci.Failed != "":
 		return fmt.Sprintf("release %s: %s failed on the canary: %s", v, ci.RC, ci.Failed)
+	case ci.Running && ci.Silent:
+		since := "an unknown time"
+		if !ci.Beacon.Updated.IsZero() {
+			since = ci.Beacon.Updated.UTC().Format("2006-01-02 15:04 UTC")
+		}
+		return fmt.Sprintf("release %s: %s on the canary «%s»: canary silent since %s (no beacon for %dh); no final tag", v, rcShort(ci.RC), ci.Name, since, ci.Stale)
 	case ci.Running && ci.Beacon.HealthySince.IsZero():
 		return fmt.Sprintf("release %s: %s on the canary «%s», no healthy tick yet", v, rcShort(ci.RC), ci.Name)
 	case ci.Running:
@@ -176,6 +192,10 @@ func canaryFindings(env *Env, ri releaseInfo, state string) []domain.Finding {
 		return out
 	}
 	f := ghFinding("github-main", "release-canary|"+ci.RC, "release", "info", v, ci.line(v), "")
+	if ci.Silent { // a canary that stopped ticking still looks healthy in its last beacon
+		f.Severity = "medium"
+		f.Detail = fmt.Sprintf("The canary's beacon on the %q issue was last written more than %dh ago (canary_stale_hours): is «%s» still running?", update.FleetTitle, ci.Stale, ci.Name)
+	}
 	if ci.Ready {
 		f = ghFinding("github-main", "release-final|"+v, "release", "medium", v, ci.line(v), "")
 		if state == "green" {
