@@ -41,6 +41,10 @@ func actGitHub(ctx context.Context, name string, f domain.Finding, env *Env) Res
 		r = delegate(ctx, c, f, env)
 	case "pickup-branch":
 		r = pickupBranch(ctx, c, f, env)
+	case "roadmap":
+		r = roadmapAct(ctx, c, f, env)
+	case "rfc-accept":
+		r = rfcAccept(ctx, c, f, env)
 	}
 	// nothing that leaves an act carries the token
 	r.Summary = c.Redact(r.Summary)

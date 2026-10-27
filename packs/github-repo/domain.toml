@@ -1,7 +1,8 @@
 # One GitHub repository, maintained: issues worked in branches and opened as
 # PRs, outside PRs reviewed (never merged), Warden's own PRs, Dependabot's and
 # trusted delegates' merged on green CI, patch/minor releases cut from merged
-# PR titles. Hard limits in code: the kill switch (a `warden-pause` label or a
+# PR titles, and once a week a roadmap of its own (ROADMAP.md and a few
+# issues; architecture changes as RFCs that wait for an objection). Hard limits in code: the kill switch (a `warden-pause` label or a
 # PAUSE file on main) is read first every tick; issue and PR text is untrusted
 # data and never drives a merge or a release; protected paths always go to the
 # owner (needs-human); external code never runs here; a daily model budget.
@@ -31,6 +32,23 @@ delegate_labels    = ""                  # label → agent, e.g. { infra = "Ops"
 delegate_default   = ""                  # the agent for hard issues when no paid brain may take them
 pickup_branches    = ""                  # branch prefixes a delegate pushes to; Warden opens the PR
 pause_label        = "warden-pause"
+roadmap            = "on"                # on | off: the weekly roadmap (ROADMAP.md as a PR, a few issues) and the RFC timer
+roadmap_day        = "mon"               # the weekday (in roadmap_tz) from which the week's roadmap is due
+roadmap_tz         = "Europe/Moscow"
+roadmap_max_issues = "3"                 # issues the roadmap may open per week (duplicates of open issues skipped)
+rfc_wait_hours     = "72"                # an RFC Warden opened gets the warden label after this long with no objection
+# Ecosystem news for the roadmap: titles and links from the last 14 days only.
+# MCP spec and registry, A2A, Agent Skills, ACP, the Go blog, Renovate,
+# Dependabot, OpenHands. Go advisories come from OSV in the other packs.
+roadmap_feeds      = '''["https://github.com/modelcontextprotocol/modelcontextprotocol/releases.atom",
+  "https://github.com/modelcontextprotocol/registry/releases.atom",
+  "https://github.com/a2aproject/A2A/releases.atom",
+  "https://github.com/anthropics/skills/commits.atom",
+  "https://github.com/agentclientprotocol/agent-client-protocol/releases.atom",
+  "https://go.dev/blog/feed.atom",
+  "https://github.com/renovatebot/renovate/releases.atom",
+  "https://github.com/dependabot/dependabot-core/releases.atom",
+  "https://github.com/OpenHands/OpenHands/releases.atom"]'''
 
 # The kill switch, checked first every tick: any finding → this tick only
 # observes and reports; every act is refused.
@@ -49,6 +67,10 @@ run  = { builtin = "github-prs" }
 [[observe]]
 name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow
 run  = { builtin = "github-main" }
+
+[[observe]]
+name = "roadmap"                         # once an ISO week (on or after roadmap_day, no open warden/roadmap-* PR) → roadmap; Warden's own RFCs past rfc_wait_hours with no objection → rfc-accept
+run  = { builtin = "github-roadmap" }
 
 [[act]]
 name   = "work-issue"                    # a branch warden/issue-N-slug from main, the brain edits files only, a (draft) PR "Closes #N"
@@ -79,3 +101,13 @@ floors = { max_per_day = 5 }
 name   = "pickup-branch"                 # a delegate's pushed branch becomes a PR under the merge rules
 run    = { builtin = "pickup-branch" }
 floors = { untrusted = "deny", max_per_day = 5 }
+
+[[act]]
+name   = "roadmap"                       # inputs gathered without a model, fenced; the brain answers one JSON object → ROADMAP.md in a ready PR (warden, roadmap) + up to roadmap_max_issues issues (RFCs without the warden label)
+run    = { builtin = "roadmap" }
+floors = { reversible = true, needs_brain = true, max_per_day = 1 }
+
+[[act]]
+name   = "rfc-accept"                    # an RFC that waited rfc_wait_hours with no comment from anyone else and no needs-human/wontfix/question label gets the warden label
+run    = { builtin = "rfc-accept" }
+floors = { reversible = true, max_per_day = 3 }

@@ -11,12 +11,15 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
    switch can't be read (the API is down, the token is gone), the tick is paused too.
 2. **Issues** (`github-issues`). Open issues become findings with their labels, author and author association. An
    issue is actionable when it is labeled `warden`, or `good first issue` / `bug` / `enhancement` and was opened by a
-   member, owner or collaborator — and not labeled `needs-human`, `wontfix`, `question` or `delegated`. One issue at a
-   time: while a `warden/issue-*` PR is in flight, the next one waits.
+   member, owner or collaborator — and not labeled `needs-human`, `wontfix`, `question` or `delegated`. An issue
+   labeled `rfc` waits until it also carries `warden` (see the weekly roadmap below). One issue at a time: while a
+   `warden/issue-*` PR is in flight, the next one waits.
 3. **Pull requests** (`github-prs`). Warden's own PRs, Dependabot's and those of `trusted_authors` are merged when every
    rule holds (below). Everyone else's get one review comment per head commit, never an approval, never a merge.
 4. **Main** (`github-main`). A red `main` (the latest run of each workflow on its head) is a high finding and blocks
    releases. Merged PRs since the latest `vX.Y.Z` tag make a release finding.
+5. **The roadmap** (`github-roadmap`). Once an ISO week the roadmap is due; Warden's own RFCs that waited long enough
+   without an objection are accepted (below).
 
 ## The acts
 
@@ -27,12 +30,53 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 | `merge-pr` | Only own / Dependabot / trusted PRs; every reported check green (and `required_checks` present); mergeable; no `needs-human`; no protected path; not paused (asked again right before merging); a Dependabot major bump (or one it can't read) → `needs-human`. Squash merge, pinned to the head SHA. | `untrusted = "deny"` |
 | `release` | From green `main`, never paused, one a day: the next version from merged PR labels and titles (`feat`/`enhancement` → minor, else patch; breaking → an issue for the owner, never released). A release PR updates `CHANGELOG.md` from the PR titles and links (Keep a Changelog sections, no model). It merges under `merge-pr`'s rules; then Warden tags `vX.Y.Z` on its merge commit through the API, and the repository's release workflow builds it. A failed release workflow is a critical ping. | `untrusted = "deny"` |
 | `delegate` | Hands an issue to another agent of the owner's with `params.delegate_cmd`, an argv template (`{title}`, `{body}`, `{agent}`, `{issue}`, `{url}`, `{repo}`; no shell) — e.g. a team tracker CLI or a chat bridge the image already has. Used for issues labeled per `delegate_labels`, and for hard issues when no paid brain may take them (`delegate_default`). The work comes back as PRs from `trusted_authors`, or as a branch under `pickup_branches` that Warden opens a PR for. | `max_per_day` |
+| `roadmap` | Once a week: ROADMAP.md in a ready PR `warden/roadmap-YYYY-Www` (labeled `warden`, `roadmap`; merged under `merge-pr`'s rules) and up to `roadmap_max_issues` issues, from inputs gathered without a model (below). | `reversible`, `needs_brain`, `max_per_day = 1` |
+| `rfc-accept` | An RFC Warden opened, `rfc_wait_hours` old, with no comment from anyone else and no `needs-human` / `wontfix` / `question` label, gets the `warden` label and a comment. | `reversible`, `max_per_day = 3` |
 | `pickup-branch` | A delegate's pushed branch becomes a PR, merged under the same rules as Warden's own. The PR is titled after the branch's commits (one commit: its subject and body; several: the oldest subject and a list of every subject), so the release reads the right bump. | `untrusted = "deny"` |
 
 `checks_mode = "ci"` (the default) means Warden never runs repository code where it lives: no Go, node or sandbox
 needed in its image; CI decides. `checks_mode = "local"` runs `params.checks` in the sandbox in the worktree (no
 network, no secrets in the environment; modules from the Go proxy only), with one escalation on red, and opens a
 ready PR.
+
+## Self-direction: the weekly roadmap
+
+Warden decides what to build next on its own repository, once a week and within limits. From `roadmap_day` (default
+`mon`) in `roadmap_tz` (default `Europe/Moscow`), when the week's roadmap is not done and no `warden/roadmap-*` PR is
+open, `github-roadmap` proposes the act `roadmap` — only when a brain may work now (`brain_for.roadmap`, e.g. the
+local model in its off-hours window), so a deferred week does not use up the day's one act. `roadmap = "off"` turns
+it off.
+
+The act gathers its inputs without a model, each capped and fenced as data:
+
+- its own reports of the last 7 days (the header, **Done** and **Important**) and the acts that failed (`done.json`);
+- the experiment log's weekly summary (`docs/experiment-27b.md` on `main`, param `experiment_doc`);
+- the current `ROADMAP.md` on `main` — the owner's edits are read as the owner's priorities;
+- the fleet: open `warden-rollback` issues and the latest comments on the `warden-fleet` issue;
+- the repository: open issues (titles, labels), PRs merged in the last 14 days, open PRs;
+- ecosystem news: titles and links of the last 14 days from `roadmap_feeds` (the pack lists MCP, the MCP registry,
+  A2A, Agent Skills, ACP, the Go blog, Renovate, Dependabot and OpenHands).
+
+The brain (system prompt: the pack's `skills/roadmap/SKILL.md`) answers one JSON object, `roadmap_md` and up to 10
+issues (`title`, `body`, `kind` = `feature|fix|chore`, `size` = `S|M|L`, `rfc`, `why`). It is parsed strictly: an
+issue with an unknown kind or size or a title over 100 characters is dropped, a body is cut at 4000 characters; an
+answer without `roadmap_md` makes nothing. Then:
+
+- `ROADMAP.md` — "Generated weekly by Warden; the owner edits freely; Warden rewrites it next week" and the brain's
+  text, mentions defused — goes to a ready PR "docs: roadmap for YYYY-Www" labeled `warden`, `roadmap`. It is not a
+  protected path, so it merges on green CI like Warden's other PRs.
+- At most `roadmap_max_issues` (default 3) issues a week; one that duplicates an open issue (the same normalized
+  title, or at least 80% of its words) is skipped. Labels: `enhancement` / `bug` / `chore` by kind, `size:S|M|L`,
+  `roadmap`, and `warden`, so `work-issue` picks it up (`size:S` counts as small: the free brain first).
+- An architecture change (`rfc: true`) becomes "RFC: …" labeled `rfc` and `roadmap`, **without** `warden`; its body
+  says Warden implements it after 72 h without objection. Every tick, `github-roadmap` checks Warden's own open RFCs:
+  older than `rfc_wait_hours` (default 72), no comment from anyone but the token's login, no `needs-human`, `wontfix`
+  or `question` label → `rfc-accept` adds `warden` and comments "No objection in 72 h: Warden will implement this."
+  To object, comment or add one of those labels. (If the token is the owner's own, the owner's comments look like
+  Warden's: object with a label.)
+
+The budget applies as everywhere: the brain is routed by `brain_for` and its off-hours, `max_per_day = 1`, and the
+meter's daily cap. Rules in `warden.toml` decide whether `roadmap` and `rfc-accept` run alone (`then = "auto"`) or ask.
 
 ## Guardrails
 
@@ -125,7 +169,8 @@ wake    = { every = "10m" }
 digest  = "daily"
 rules   = [{ act = "release", target = "v*.0.0", then = "deny" },   # majors: never
            { act = "work-issue", then = "auto" }, { act = "review-pr", then = "auto" }, { act = "merge-pr", then = "auto" },
-           { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" }]
+           { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" },
+           { act = "roadmap", then = "auto" }, { act = "rfc-accept", then = "auto" }]
 
 [params]
 repo               = "OWNER/REPO"

@@ -42,7 +42,7 @@ func Act(ctx context.Context, name string, with map[string]any, f domain.Finding
 		return toolClean(ctx, with, f, env)
 	case "propose":
 		return propose(ctx, f, env)
-	case "work-issue", "review-pr", "merge-pr", "release", "delegate", "pickup-branch":
+	case "work-issue", "review-pr", "merge-pr", "release", "delegate", "pickup-branch", "roadmap", "rfc-accept":
 		return actGitHub(ctx, name, f, env)
 	}
 	return Result{Summary: fmt.Sprintf("builtin act %q: unknown", name)}

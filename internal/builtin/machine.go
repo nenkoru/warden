@@ -121,7 +121,7 @@ func Observe(ctx context.Context, name string, with map[string]any, env *Env) ([
 		return nil, nil
 	case "health":
 		return health(ctx), nil
-	case "github-issues", "github-prs", "github-main", "github-pause":
+	case "github-issues", "github-prs", "github-main", "github-pause", "github-roadmap":
 		return observeGitHub(ctx, name, env)
 	}
 	return nil, fmt.Errorf("builtin observe %q: unknown", name)

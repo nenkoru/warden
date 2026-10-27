@@ -1,9 +1,10 @@
 package builtin
 
 // The github-repo pack's built-ins: observers of one repository (issues,
-// PRs, main's CI and release state, the owner's kill switch) and the acts
-// that maintain it (work-issue, review-pr, merge-pr, release, delegate,
-// pickup-branch), plus github-note for the owner's notifications.
+// PRs, main's CI and release state, the owner's kill switch, the weekly
+// roadmap) and the acts that maintain it (work-issue, review-pr, merge-pr,
+// release, delegate, pickup-branch, roadmap, rfc-accept), plus github-note
+// for the owner's notifications.
 //
 // Everything an outsider can write (issue and PR titles, bodies, comments,
 // external code) is data: fenced as untrusted wherever it reaches a model,
@@ -491,12 +492,12 @@ func ciState(ctx context.Context, c *github.Client, sha string, required []strin
 
 var reDepsTitle = regexp.MustCompile(`(?i)^(chore\(deps\)|deps|build\(deps\)|bump)\b`)
 
-// smallIssue: labels the owner uses for small work (param small_labels), or
-// a dependency-only change.
+// smallIssue: labels the owner uses for small work (param small_labels; by
+// default also the roadmap's size:S), or a dependency-only change.
 func smallIssue(env *Env, labels []string, title string) bool {
 	small := listParam(env, "small_labels")
 	if len(small) == 0 {
-		small = []string{"small", "good first issue", "docs", "chore", "dependencies"}
+		small = []string{"small", "size:S", "good first issue", "docs", "chore", "dependencies"}
 	}
 	for _, l := range labels {
 		for _, s := range small {

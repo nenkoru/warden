@@ -293,9 +293,10 @@ type Tag struct {
 }
 
 type Comment struct {
-	ID   int64  `json:"id"`
-	Body string `json:"body"`
-	User User   `json:"user"`
+	ID        int64     `json:"id"`
+	Body      string    `json:"body"`
+	User      User      `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ---- calls
@@ -449,6 +450,11 @@ func (c *Client) FileExists(ctx context.Context, path, ref string) (bool, error)
 	return err == nil, err
 }
 
+// FileContent: a file's text at ref (the contents API, raw; redacted).
+func (c *Client) FileContent(ctx context.Context, path, ref string) (string, error) {
+	return c.raw(ctx, c.repoPath("/contents/%s?ref=%s", path, url.QueryEscape(ref)), "application/vnd.github.raw+json")
+}
+
 func (c *Client) Comment(ctx context.Context, n int, body string) error {
 	return c.do(ctx, "POST", c.repoPath("/issues/%d/comments", n), map[string]string{"body": c.Redact(body)}, nil)
 }
@@ -456,6 +462,13 @@ func (c *Client) Comment(ctx context.Context, n int, body string) error {
 func (c *Client) Comments(ctx context.Context, n int) ([]Comment, error) {
 	var cs []Comment
 	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?per_page=100", n), nil, &cs)
+}
+
+// RecentComments: an issue's comments updated since a time, oldest first
+// (at most 100).
+func (c *Client) RecentComments(ctx context.Context, n int, since time.Time) ([]Comment, error) {
+	var cs []Comment
+	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?since=%s&per_page=100", n, url.QueryEscape(since.UTC().Format(time.RFC3339))), nil, &cs)
 }
 
 func (c *Client) AddLabels(ctx context.Context, n int, labels ...string) error {

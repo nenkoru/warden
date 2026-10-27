@@ -59,14 +59,17 @@ type Fake struct {
 	Dates    map[string]time.Time // commit sha → date
 	Branches map[string]string    // name → sha
 	Files    map[string]bool      // paths present on main (PAUSE)
+	Contents map[string]string    // path → text on main (the raw contents API)
 	Comments map[int][]string
-	Reviews  []Review
-	Merged   []int
-	Refs     map[string]string // refs created through the API → sha
-	Bodies   []string          // every request body
-	Requests []string          // "METHOD path"
-	Ready    []int             // PRs marked ready for review
-	next     int
+	// CommentBy: a comment's author by issue and index (default: the token's login).
+	CommentBy map[int]map[int]string
+	Reviews   []Review
+	Merged    []int
+	Refs      map[string]string // refs created through the API → sha
+	Bodies    []string          // every request body
+	Requests  []string          // "METHOD path"
+	Ready     []int             // PRs marked ready for review
+	next      int
 	// ResolveHead: the sha of a pushed branch (tests: from the bare remote).
 	ResolveHead func(branch string) string
 	// FilesOf: the changed files of a pushed branch (tests: from the bare remote).
@@ -81,7 +84,7 @@ func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
 		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
-		Comments: map[int][]string{}, Refs: map[string]string{}, next: 1}
+		Contents: map[string]string{}, Comments: map[int][]string{}, CommentBy: map[int]map[int]string{}, Refs: map[string]string{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
 	return f
@@ -106,6 +109,17 @@ func (f *Fake) AddIssue(title, body, author, assoc string, ls ...string) int {
 	f.Issues[n] = &github.Issue{Number: n, Title: title, Body: body, State: "open", User: github.User{Login: author}, AuthorAssociation: assoc,
 		Labels: labels(ls...), HTMLURL: fmt.Sprintf("https://github.com/%s/issues/%d", f.Repo, n), NodeID: fmt.Sprintf("I_%d", n), CreatedAt: f.Now}
 	return n
+}
+
+// AddComment adds a comment by someone (the token's own go through the API).
+func (f *Fake) AddComment(n int, author, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.CommentBy[n] == nil {
+		f.CommentBy[n] = map[int]string{}
+	}
+	f.CommentBy[n][len(f.Comments[n])] = author
+	f.Comments[n] = append(f.Comments[n], body)
 }
 
 // AddPR adds an open PR with a head sha, its files and a green or red CI.
@@ -228,7 +242,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		n := f.next
 		f.next++
 		i := &github.Issue{Number: n, Title: str(in["title"]), Body: str(in["body"]), State: "open", User: github.User{Login: f.Login},
-			AuthorAssociation: "OWNER", NodeID: fmt.Sprintf("I_%d", n), HTMLURL: fmt.Sprintf("https://github.com/%s/issues/%d", f.Repo, n)}
+			AuthorAssociation: "OWNER", NodeID: fmt.Sprintf("I_%d", n), HTMLURL: fmt.Sprintf("https://github.com/%s/issues/%d", f.Repo, n), CreatedAt: f.Now}
 		if ls, ok := in["labels"].([]any); ok {
 			for _, l := range ls {
 				i.Labels = append(i.Labels, github.Label{Name: str(l)})
@@ -255,7 +269,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		case m[2] == "comments":
 			var out []github.Comment
 			for i, c := range f.Comments[n] {
-				out = append(out, github.Comment{ID: int64(i + 1), Body: c})
+				who := f.Login
+				if a := f.CommentBy[n][i]; a != "" {
+					who = a
+				}
+				out = append(out, github.Comment{ID: int64(i + 1), Body: c, User: github.User{Login: who}, CreatedAt: f.Now})
 			}
 			js(out)
 		case m[2] == "labels":
@@ -443,7 +461,12 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		js(out)
 	case strings.HasPrefix(path, "/contents/"):
-		if f.Files[strings.TrimPrefix(path, "/contents/")] {
+		p := strings.TrimPrefix(path, "/contents/")
+		if text, ok := f.Contents[p]; ok && strings.Contains(r.Header.Get("Accept"), "raw") {
+			_, _ = io.WriteString(w, text)
+			return
+		}
+		if _, ok := f.Contents[p]; ok || f.Files[p] {
 			js(map[string]string{"type": "file"})
 			return
 		}

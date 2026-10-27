@@ -37,6 +37,8 @@ func observeGitHub(ctx context.Context, name string, env *Env) ([]domain.Finding
 		return observeIssues(ctx, c, env)
 	case "github-prs":
 		return observePRs(ctx, c, env)
+	case "github-roadmap":
+		return observeRoadmap(ctx, c, env)
 	}
 	return observeMain(ctx, c, env)
 }
@@ -116,6 +118,10 @@ func observeIssues(ctx context.Context, c *github.Client, env *Env) ([]domain.Fi
 		out = append(out, f)
 		fp := &out[len(out)-1]
 		if anyLabel(labels, skip) {
+			continue
+		}
+		if is.Has(labelRFC) && !is.Has(labelWarden) { // an RFC is worked only once accepted (rfc-accept, or the owner's warden label)
+			fp.Title += " — RFC: waiting for objections"
 			continue
 		}
 		if pr, ok := open[is.Number]; ok {

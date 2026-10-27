@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/nenkoru/warden/internal/domain"
 )
@@ -13,10 +14,11 @@ import (
 var majorSuffix = regexp.MustCompile(`/v[0-9]+$`)
 
 type atomEntry struct {
-	Title   string `xml:"title"`
-	Updated string `xml:"updated"`
-	ID      string `xml:"id"`
-	Links   []struct {
+	Title     string `xml:"title"`
+	Updated   string `xml:"updated"`
+	Published string `xml:"published"`
+	ID        string `xml:"id"`
+	Links     []struct {
 		Href string `xml:"href,attr"`
 		Rel  string `xml:"rel,attr"`
 	} `xml:"link"`
@@ -96,8 +98,24 @@ func Releases(ctx context.Context, repos []string, last map[string]string, comps
 	return out, errs
 }
 
-// FeedItem: one RSS item or Atom entry.
-type FeedItem struct{ ID, Title, Link, Text string }
+// FeedItem: one RSS item or Atom entry; Date is zero when the feed gives none.
+type FeedItem struct {
+	ID, Title, Link, Text string
+	Date                  time.Time
+}
+
+// feedDate: an Atom (RFC 3339) or RSS (RFC 1123) date; zero when unreadable.
+func feedDate(ss ...string) time.Time {
+	for _, s := range ss {
+		s = strings.TrimSpace(s)
+		for _, layout := range []string{time.RFC3339, time.RFC1123Z, time.RFC1123, "Mon, 2 Jan 2006 15:04:05 -0700", "Mon, 2 Jan 2006 15:04:05 MST", time.DateOnly} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Time{}
+}
 
 // Feed fetches an RSS 2.0 or Atom feed.
 func Feed(ctx context.Context, url string, env *Env) ([]FeedItem, error) {
@@ -119,6 +137,7 @@ func parseFeed(b []byte) ([]FeedItem, error) {
 			Link        string `xml:"link"`
 			GUID        string `xml:"guid"`
 			Description string `xml:"description"`
+			PubDate     string `xml:"pubDate"`
 		} `xml:"channel>item"`
 	}
 	if xml.Unmarshal(b, &rss) == nil && len(rss.Items) > 0 {
@@ -128,7 +147,8 @@ func parseFeed(b []byte) ([]FeedItem, error) {
 			if id == "" {
 				id = strings.TrimSpace(it.Link)
 			}
-			out = append(out, FeedItem{ID: id, Title: strings.TrimSpace(it.Title), Link: strings.TrimSpace(it.Link), Text: firstLines(stripTags(it.Description), 6)})
+			out = append(out, FeedItem{ID: id, Title: strings.TrimSpace(it.Title), Link: strings.TrimSpace(it.Link), Text: firstLines(stripTags(it.Description), 6),
+				Date: feedDate(it.PubDate)})
 		}
 		return out, nil
 	}
@@ -146,7 +166,7 @@ func parseFeed(b []byte) ([]FeedItem, error) {
 		if id == "" {
 			id = e.link()
 		}
-		out = append(out, FeedItem{ID: id, Title: strings.TrimSpace(e.Title), Link: e.link(), Text: firstLines(stripTags(body), 6)})
+		out = append(out, FeedItem{ID: id, Title: strings.TrimSpace(e.Title), Link: e.link(), Text: firstLines(stripTags(body), 6), Date: feedDate(e.Published, e.Updated)})
 	}
 	return out, nil
 }

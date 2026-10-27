@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Self-direction for the `github-repo` pack: once an ISO week (`roadmap_day`, `roadmap_tz`) the `roadmap` act gathers
+  Warden's own reports and failed acts, the experiment log's weekly summary, the current `ROADMAP.md`, the fleet's
+  rollback issues and comments, the repository's issues and PRs, and ecosystem news (`roadmap_feeds`, last 14 days)
+  without a model, fenced as data; the brain (the pack's new `roadmap` skill) answers one JSON object, parsed
+  strictly. `ROADMAP.md` goes to a ready PR merged on green; up to `roadmap_max_issues` issues are opened (duplicates
+  skipped), labeled by kind and `size:S|M|L`; architecture changes are RFCs without the `warden` label, accepted by
+  `rfc-accept` after `rfc_wait_hours` (72) with no objection. Observer `github-roadmap`; `roadmap = "off"` disables.
+  `size:S` counts as a small issue by default. Feed items carry their date; the GitHub client reads file contents and
+  recent comments.
 - The `github-repo` pack: Warden maintains one GitHub repository — issues worked into draft PRs (`work-issue`, CI
   decides, one fix round from the failed jobs' logs), outside PRs reviewed with one `COMMENT` per head commit
   (`review-pr`, never merged, their code never run), its own, Dependabot's and `trusted_authors`' PRs squash-merged on
