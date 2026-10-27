@@ -47,7 +47,8 @@ name = "prs"                             # open PRs → merge-pr (own, Dependabo
 run  = { builtin = "github-prs" }
 
 [[observe]]
-name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow
+name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow;
+                                         # a newly published release's CHANGELOG section goes to the "Warden digest" issue once
 run  = { builtin = "github-main" }
 
 [[act]]

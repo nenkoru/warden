@@ -298,6 +298,17 @@ type Comment struct {
 	User User   `json:"user"`
 }
 
+// Release: a published GitHub release (CreatedAt is the date of its commit).
+type Release struct {
+	TagName     string     `json:"tag_name"`
+	Name        string     `json:"name"`
+	Draft       bool       `json:"draft"`
+	Prerelease  bool       `json:"prerelease"`
+	HTMLURL     string     `json:"html_url"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at"`
+}
+
 // ---- calls
 
 // Login: the token's user (cached).
@@ -449,6 +460,18 @@ func (c *Client) FileExists(ctx context.Context, path, ref string) (bool, error)
 	return err == nil, err
 }
 
+// FileContent: the text of path at ref (the contents API, raw).
+func (c *Client) FileContent(ctx context.Context, path, ref string) (string, error) {
+	return c.raw(ctx, c.repoPath("/contents/%s?ref=%s", path, url.QueryEscape(ref)), "application/vnd.github.raw+json")
+}
+
+// LatestRelease: the newest published, non-prerelease release (ErrNotFound
+// when there is none).
+func (c *Client) LatestRelease(ctx context.Context) (Release, error) {
+	var r Release
+	return r, c.do(ctx, "GET", c.repoPath("/releases/latest"), nil, &r)
+}
+
 func (c *Client) Comment(ctx context.Context, n int, body string) error {
 	return c.do(ctx, "POST", c.repoPath("/issues/%d/comments", n), map[string]string{"body": c.Redact(body)}, nil)
 }
@@ -456,6 +479,13 @@ func (c *Client) Comment(ctx context.Context, n int, body string) error {
 func (c *Client) Comments(ctx context.Context, n int) ([]Comment, error) {
 	var cs []Comment
 	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?per_page=100", n), nil, &cs)
+}
+
+// CommentsSince: an issue's comments updated at or after since (the list
+// is oldest first, so a long-lived issue is read from a recent point).
+func (c *Client) CommentsSince(ctx context.Context, n int, since time.Time) ([]Comment, error) {
+	var cs []Comment
+	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?since=%s&per_page=100", n, url.QueryEscape(since.UTC().Format(time.RFC3339))), nil, &cs)
 }
 
 func (c *Client) AddLabels(ctx context.Context, n int, labels ...string) error {

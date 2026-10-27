@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nenkoru/warden/internal/policy"
+	"github.com/nenkoru/warden/internal/version"
 )
 
 // The report: reports/<tick>.md when something is worth it, reports/latest.md
@@ -32,7 +33,7 @@ func (in *Instance) report(ctx context.Context, t *Tick) error {
 	if in.DryRun {
 		mode = "dry-run (changing nothing)"
 	}
-	fmt.Fprintf(&b, "# Warden «%s» · %s\n\n", in.Cfg.Name, t.At.Format("2006-01-02 15:04"))
+	fmt.Fprintf(&b, "# Warden «%s» · %s · warden %s\n\n", in.Cfg.Name, t.At.Format("2006-01-02 15:04"), version.Version)
 	fmt.Fprintf(&b, "Domain: **%s** (`%s`) · mode: **%s** · triage v%d · sandbox: %s\n\n", in.Dom.Name, in.target(), mode, in.Triage.Triage().Version, in.SandboxLabel())
 	if in.paused != "" {
 		fmt.Fprintf(&b, "**⏸ Paused by the owner: %s** — this tick only observes and reports; every act is refused.\n\n", in.paused)
@@ -161,8 +162,9 @@ func (in *Instance) report(ctx context.Context, t *Tick) error {
 	if t.Fresh > 0 && t.Report != "" && t.Held == "" {
 		title := fmt.Sprintf("Warden «%s»: %d new", in.Cfg.Name, t.Fresh)
 		if in.hasHook("Report") {
+			all, urgent := attention(t)
 			in.fire(ctx, "Report", "report", map[string]any{"name": in.Cfg.Name, "title": title, "report": t.Report, "summary": t.Summary, "fresh": t.Fresh,
-				"attention": attention(t), "spend": in.spendLine(), "paused": in.paused})
+				"attention": all, "urgent": urgent, "spend": in.spendLine(), "paused": in.paused, "version": version.Version})
 			in.pinged(t.At)
 		}
 	}

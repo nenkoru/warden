@@ -50,7 +50,7 @@ sets `sandbox = "none"` explicitly and relies on the pod as the boundary; the re
 From `examples/demo-k8s.txt`:
 
 ```markdown
-# Warden «shop» · 2026-10-27 19:22
+# Warden «shop» · 2026-10-27 19:22 · warden 0.2.0
 
 Domain: **k8s-namespace** (`context=kind-demo namespace=shop`) · mode: **act** · triage v1 · sandbox: sandbox-exec
 

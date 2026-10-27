@@ -563,7 +563,11 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 		if err := c.CreateTag(ctx, p["version"], p["sha"]); err != nil {
 			return Result{Summary: "release: tag: " + err.Error()}
 		}
-		return Result{OK: true, Summary: fmt.Sprintf("tagged %s on %s; the release workflow builds it", p["version"], short7(p["sha"]))}
+		sum := fmt.Sprintf("tagged %s on %s; the release workflow builds it", p["version"], short7(p["sha"]))
+		if n, _ := releaseNote(ctx, c, env, p["version"], p["sha"], "is tagged; the release workflow builds it", env.now().Add(-30*24*time.Hour)); n > 0 {
+			sum += fmt.Sprintf("; release notes on issue #%d", n)
+		}
+		return Result{OK: true, Summary: sum}
 	}
 	if len(ri.Merged) == 0 || ri.Open != nil {
 		return Result{OK: true, Summary: "release: nothing to do"}

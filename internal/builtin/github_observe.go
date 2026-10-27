@@ -95,7 +95,7 @@ func observeIssues(ctx context.Context, c *github.Client, env *Env) ([]domain.Fi
 	}
 	skip := listParam(env, "skip_labels")
 	if len(skip) == 0 {
-		skip = []string{labelNeedsHuman, "wontfix", "question", "warden-pause", "warden-log", labelDelegated}
+		skip = []string{labelNeedsHuman, "wontfix", "question", "warden-pause", labelLog, labelDigest, labelDelegated}
 	}
 	work := listParam(env, "work_labels")
 	if len(work) == 0 {
@@ -475,6 +475,7 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 		f.Data = map[string]string{"sha": sha}
 		out = append(out, f)
 	}
+	notePublished(ctx, c, env)
 	if param(nil, env, "release", "auto") == "off" {
 		return out, nil
 	}
@@ -530,6 +531,17 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 		}
 	}
 	return out, nil
+}
+
+// notePublished: a release published in the last two weeks (from Warden's
+// tag or the owner's) gets its notes on the digest issue, once (best effort:
+// a notification, not a finding).
+func notePublished(ctx context.Context, c *github.Client, env *Env) {
+	r, err := c.LatestRelease(ctx)
+	if err != nil || r.Draft || r.PublishedAt == nil || env.now().Sub(*r.PublishedAt) > 14*24*time.Hour || !reVersionTag.MatchString(r.TagName) {
+		return
+	}
+	_, _ = releaseNote(ctx, c, env, r.TagName, r.TagName, "is released", r.CreatedAt.Add(-24*time.Hour))
 }
 
 func prList(ps []github.PR) string {
