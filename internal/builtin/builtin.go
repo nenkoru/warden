@@ -86,6 +86,7 @@ type Env struct {
 	Run    func(ctx context.Context, dir string, argv []string, f policy.Floors) (string, error)
 	Checks func(ctx context.Context, dir string) (string, error) // nil = none
 	Brain  brain.Brain                                           // may be nil
+	Brains *Brains                                               // named brains and routing; nil: Brain for everything
 	Tools  []brain.Tool
 	Skills string
 	Now    func() time.Time

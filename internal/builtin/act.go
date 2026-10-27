@@ -19,6 +19,11 @@ type Result struct {
 	OK                    bool
 	Summary, Branch, File string
 	Log                   []string
+	// Refused: not done on purpose (a rule, a floor, the owner's call), not a failure.
+	Refused bool
+	// Deferred: nothing happened yet and nothing is remembered: the act is
+	// proposed again next tick (CI still running, the local model off-hours).
+	Deferred bool
 }
 
 // Act runs one built-in act for a finding.
@@ -37,6 +42,8 @@ func Act(ctx context.Context, name string, with map[string]any, f domain.Finding
 		return toolClean(ctx, with, f, env)
 	case "propose":
 		return propose(ctx, f, env)
+	case "work-issue", "review-pr", "merge-pr", "release", "delegate", "pickup-branch":
+		return actGitHub(ctx, name, f, env)
 	}
 	return Result{Summary: fmt.Sprintf("builtin act %q: unknown", name)}
 }
