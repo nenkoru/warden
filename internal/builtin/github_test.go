@@ -667,3 +667,27 @@ func TestProtected(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// With no release tag yet the first version is the owner's: an issue, no release PR, no tag.
+func TestFirstReleaseIsTheOwners(t *testing.T) {
+	w := newWorld(t)
+	w.fake.MergedPR("feat: the first thing", "warden/issue-1-x", w.fake.Now.Add(-time.Hour))
+	mainSHA := ""
+	w.fake.With(func(f *githubtest.Fake) { mainSHA = f.Branches["main"] })
+	w.fake.AddRun(github.WorkflowRun{Name: "CI", HeadBranch: "main", HeadSHA: mainSHA, Event: "push", Status: "completed", Conclusion: "success", WorkflowID: 1})
+	f := fixOf(w.observe("github-main"), "release")
+	if f == nil || f.Fix.Params["first"] != "true" || strings.Contains(f.Title, "v0.0.1") {
+		t.Fatalf("first release fix: %+v", f)
+	}
+	r := Act(context.Background(), "release", nil, *f, w.env)
+	if r.OK || !strings.Contains(r.Summary, "first release is the owner's") {
+		t.Fatalf("first release must go to the owner: %+v", r)
+	}
+	if w.ref("warden/release-v0.1.0") != "" || w.ref("warden/release-v0.0.1") != "" {
+		t.Fatal("no release branch for the first release")
+	}
+	again := Act(context.Background(), "release", nil, *f, w.env)
+	if !strings.Contains(again.Summary, "(issue #") {
+		t.Fatalf("the owner's issue is opened once: %+v", again)
+	}
+}

@@ -349,6 +349,16 @@ func dailyAdd(env *Env, what string) {
 // the token is never in argv, the environment or the remote URL. Its
 // output is redacted all the same.
 func gitAuth(ctx context.Context, c *github.Client, tokenFile, dir string, args ...string) (string, error) {
+	if len(args) > 0 && args[0] == "push" { // only warden/* branches, never main: whatever the repository enforces
+		for _, a := range args[1:] {
+			if strings.Contains(a, ":") && !github.AllowedPush(a) {
+				return "", fmt.Errorf("git push %s: refused by Warden's guard: only warden/* branches", a)
+			}
+		}
+		if len(args) < 3 || !strings.Contains(args[len(args)-1], ":") {
+			return "", fmt.Errorf("git push: refused by Warden's guard: an explicit warden/* refspec is required")
+		}
+	}
 	argv := append([]string{"-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=" + github.CredentialHelper,
 		"-c", "credential.useHttpPath=false", "-c", "user.name=Warden", "-c", "user.email=warden@localhost"}, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)

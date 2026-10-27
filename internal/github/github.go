@@ -113,6 +113,9 @@ func (c *Client) raw(ctx context.Context, path, accept string) (string, error) {
 }
 
 func (c *Client) send(ctx context.Context, method, path, accept string, body, out any) error {
+	if why := c.Guard(method, path, body); why != "" {
+		return fmt.Errorf("github %s %s: refused by Warden's guard: %s", method, path, why)
+	}
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
