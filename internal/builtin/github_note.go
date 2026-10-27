@@ -217,17 +217,20 @@ func digestIssue(ctx context.Context, c *github.Client, env *Env, create bool) (
 	if err != nil {
 		return 0, err
 	}
-	is, err := c.IssuesLabeled(ctx, labelDigest)
-	if err != nil {
-		return 0, err
+	n, err := oldestDigest(ctx, c, login)
+	if err != nil || n > 0 || !create {
+		return n, err
 	}
-	for _, i := range is {
-		if i.User.Login == login {
-			return i.Number, nil
-		}
+	// The issue list lags a few seconds behind a create: two hooks of one
+	// tick (Report, then Digest) made two issues. Look once more before
+	// creating; if two exist anyway, every note goes to the oldest.
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(digestRecheck):
 	}
-	if !create {
-		return 0, nil
+	if n, err = oldestDigest(ctx, c, login); err != nil || n > 0 {
+		return n, err
 	}
 	body := "Warden's notes to the owner of this repository: one daily digest (what it did, what failed, what waits for you), " +
 		"the release notes of each new version, and a ping right away only for what can't wait: security findings, a failed release " +
@@ -241,6 +244,24 @@ func digestIssue(ctx context.Context, c *github.Client, env *Env, create bool) (
 	}
 	_ = c.Pin(ctx, i.NodeID) // best effort: pinning is GraphQL-only and cosmetic
 	return i.Number, nil
+}
+
+// digestRecheck: how long digestIssue waits before looking again (tests: 0).
+var digestRecheck = 3 * time.Second
+
+// oldestDigest: the lowest-numbered open warden-digest issue by login, or 0.
+func oldestDigest(ctx context.Context, c *github.Client, login string) (int, error) {
+	is, err := c.IssuesLabeled(ctx, labelDigest)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, i := range is {
+		if i.User.Login == login && (n == 0 || i.Number < n) {
+			n = i.Number
+		}
+	}
+	return n, nil
 }
 
 // releaseNote: the CHANGELOG.md section of version (read at ref) as a

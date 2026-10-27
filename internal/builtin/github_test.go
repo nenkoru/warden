@@ -48,6 +48,9 @@ func newWorld(t *testing.T) *ghWorld {
 		t.Skip("git")
 	}
 	dir := t.TempDir()
+	recheck := digestRecheck
+	digestRecheck = 0
+	t.Cleanup(func() { digestRecheck = recheck })
 	w := &ghWorld{t: t, fake: githubtest.New(t, secret, "warden-bot", "acme/proj"), bare: filepath.Join(dir, "remote.git"), root: filepath.Join(dir, "clone")}
 	w.token = filepath.Join(dir, "token")
 	if err := os.WriteFile(w.token, []byte(secret+"\n"), 0o600); err != nil {
@@ -652,6 +655,22 @@ func digestOf(w *ghWorld) (int, []string) {
 		}
 	})
 	return n, cs
+}
+
+// Two digest issues (a create that raced the issue list): notes go to the oldest.
+func TestDigestIssueOldest(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	first := w.fake.AddIssue("Warden digest", "", "warden-bot", "OWNER", labelDigest)
+	w.fake.AddIssue("Warden digest", "", "warden-bot", "OWNER", labelDigest)
+	w.fake.AddIssue("Warden digest", "", "someone", "NONE", labelDigest)
+	c, err := ghClient(w.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := digestIssue(ctx, c, w.env, true); err != nil || n != first {
+		t.Fatalf("digest issue %d, want the oldest %d (%v)", n, first, err)
+	}
 }
 
 func TestGitHubNote(t *testing.T) {
