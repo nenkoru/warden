@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Security
+
+- Build with Go 1.26.10 (`toolchain go1.26.10`), which fixes GO-2026-6809 (crypto/x509: distrust compromised
+  intermediate certificates). This is a deliberate exception to the project's "dependencies at least two weeks old"
+  rule, because it is a security fix in a Go patch release.
+
 ## [0.1.0] - 2026-10-27
 
 The first public version.
