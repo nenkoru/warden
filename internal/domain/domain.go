@@ -122,10 +122,8 @@ func Load(dir string, params map[string]string) (*Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	var d Domain
-	dec := toml.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&d); err != nil {
+	d, err := decode(b)
+	if err != nil {
 		return nil, fmt.Errorf("%s/domain.toml: %w", dir, err)
 	}
 	d.Dir, _ = filepath.Abs(dir)
@@ -135,7 +133,18 @@ func Load(dir string, params map[string]string) (*Domain, error) {
 	for k, v := range params {
 		d.Params[k] = v
 	}
-	return &d, d.validate()
+	return d, d.validate()
+}
+
+// decode: a manifest's TOML; unknown keys are an error.
+func decode(b []byte) (*Domain, error) {
+	var d Domain
+	dec := toml.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&d); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 func (d *Domain) validate() error {
