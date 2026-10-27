@@ -1,9 +1,10 @@
 // Package githubtest is an in-memory fake of the parts of the GitHub REST
 // API Warden uses, for offline tests: issues, labels, comments, pull
 // requests (files, diff, reviews, merge), check runs and statuses, workflow
-// runs, jobs and logs, refs, tags, branches, comparisons, contents and two GraphQL
-// mutations. Every request must carry the token; every request body is kept
-// so a test can assert the token never left in one.
+// runs, jobs and logs, refs, tags, branches, comparisons, contents, releases and their
+// assets, attestations and two GraphQL mutations. Every request must carry
+// the token (unless Anonymous allows reads without one); every request body
+// is kept so a test can assert the token never left in one.
 package githubtest
 
 import (
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,13 +62,20 @@ type Fake struct {
 	Branches map[string]string    // name → sha
 	Files    map[string]bool      // paths present on main (PAUSE)
 	Comments map[int][]string
-	Reviews  []Review
-	Merged   []int
-	Refs     map[string]string // refs created through the API → sha
-	Bodies   []string          // every request body
-	Requests []string          // "METHOD path"
-	Ready    []int             // PRs marked ready for review
-	next     int
+	// CommentBy: comment authors by comment ID (default: Login). Comment IDs
+	// are issue*1000 + index + 1.
+	CommentBy map[int64]string
+	Releases  []github.Release
+	Assets    map[int64][]byte                // asset ID → content
+	Attests   map[string][]github.Attestation // "sha256:hex" → attestations
+	Anonymous bool                            // GET requests without a token are served
+	Reviews   []Review
+	Merged    []int
+	Refs      map[string]string // refs created through the API → sha
+	Bodies    []string          // every request body
+	Requests  []string          // "METHOD path"
+	Ready     []int             // PRs marked ready for review
+	next      int
 	// ResolveHead: the sha of a pushed branch (tests: from the bare remote).
 	ResolveHead func(branch string) string
 	// FilesOf: the changed files of a pushed branch (tests: from the bare remote).
@@ -81,7 +90,8 @@ func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
 		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
-		Comments: map[int][]string{}, Refs: map[string]string{}, next: 1}
+		Comments: map[int][]string{}, Refs: map[string]string{}, CommentBy: map[int64]string{}, Assets: map[int64][]byte{},
+		Attests: map[string][]github.Attestation{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
 	return f
@@ -163,12 +173,45 @@ func (f *Fake) MergedPR(title, ref string, at time.Time, ls ...string) int {
 	return n
 }
 
+// AddComment adds a comment by author to issue n and returns its ID.
+func (f *Fake) AddComment(n int, author, body string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Comments[n] = append(f.Comments[n], body)
+	id := commentID(n, len(f.Comments[n])-1)
+	f.CommentBy[id] = author
+	return id
+}
+
+func commentID(n, i int) int64 { return int64(n)*1000 + int64(i) + 1 }
+
+// AddRelease adds a published release; assets maps a name to its content.
+func (f *Fake) AddRelease(tag string, prerelease bool, published time.Time, assets map[string][]byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := github.Release{ID: int64(len(f.Releases) + 1), TagName: tag, Prerelease: prerelease, PublishedAt: &published,
+		HTMLURL: fmt.Sprintf("https://github.com/%s/releases/tag/%s", f.Repo, tag)}
+	names := make([]string, 0, len(assets))
+	for n := range assets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		id := int64(len(f.Assets) + 1000)
+		f.Assets[id] = assets[n]
+		r.Assets = append(r.Assets, github.Asset{ID: id, Name: n, Size: int64(len(assets[n]))})
+	}
+	f.Releases = append([]github.Release{r}, f.Releases...) // newest first, like GitHub
+}
+
 // With runs fn under the fake's lock (to inspect or change state).
 func (f *Fake) With(fn func(f *Fake)) { f.mu.Lock(); defer f.mu.Unlock(); fn(f) }
 
 var (
 	reIssue    = regexp.MustCompile(`^/issues/(\d+)$`)
 	reIssueSub = regexp.MustCompile(`^/issues/(\d+)/(comments|labels)$`)
+	reComment  = regexp.MustCompile(`^/issues/comments/(\d+)$`)
+	reAsset    = regexp.MustCompile(`^/releases/assets/(\d+)$`)
 	rePull     = regexp.MustCompile(`^/pulls/(\d+)$`)
 	rePullSub  = regexp.MustCompile(`^/pulls/(\d+)/(files|merge|reviews)$`)
 	reCommit   = regexp.MustCompile(`^/commits/([^/]+)(/check-runs|/status)?$`)
@@ -182,7 +225,8 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	f.Bodies = append(f.Bodies, string(body))
 	f.Requests = append(f.Requests, r.Method+" "+r.URL.Path)
-	if r.Header.Get("Authorization") != "Bearer "+f.Token {
+	anon := f.Anonymous && r.Method == "GET" && r.Header.Get("Authorization") == ""
+	if r.Header.Get("Authorization") != "Bearer "+f.Token && !anon {
 		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
 		return
 	}
@@ -251,11 +295,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		case m[2] == "comments" && r.Method == "POST":
 			f.Comments[n] = append(f.Comments[n], str(in["body"]))
 			w.WriteHeader(201)
-			js(map[string]any{"id": len(f.Comments[n])})
+			js(map[string]any{"id": commentID(n, len(f.Comments[n])-1)})
 		case m[2] == "comments":
 			var out []github.Comment
 			for i, c := range f.Comments[n] {
-				out = append(out, github.Comment{ID: int64(i + 1), Body: c})
+				out = append(out, f.comment(n, i, c))
 			}
 			js(out)
 		case m[2] == "labels":
@@ -271,6 +315,35 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			js([]any{})
 		}
+	case reComment.MatchString(path):
+		id, _ := strconv.ParseInt(reComment.FindStringSubmatch(path)[1], 10, 64)
+		n, i := int(id/1000), int(id%1000)-1
+		if i < 0 || i >= len(f.Comments[n]) {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == "PATCH" {
+			f.Comments[n][i] = str(in["body"])
+		}
+		js(f.comment(n, i, f.Comments[n][i]))
+	case path == "/releases":
+		js(f.Releases)
+	case reAsset.MatchString(path):
+		id, _ := strconv.ParseInt(reAsset.FindStringSubmatch(path)[1], 10, 64)
+		b, ok := f.Assets[id]
+		if !ok || r.Header.Get("Accept") != "application/octet-stream" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(b)
+	case strings.HasPrefix(path, "/attestations/"):
+		as, ok := f.Attests[strings.TrimPrefix(path, "/attestations/")]
+		if !ok {
+			w.WriteHeader(404)
+			js(map[string]string{"message": "Not Found"})
+			return
+		}
+		js(map[string]any{"attestations": as})
 	case path == "/pulls" && r.Method == "GET":
 		out := []github.PR{}
 		for n := 1; n < f.next; n++ {
@@ -453,6 +526,19 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		js(map[string]string{"message": "Not Found: " + path})
 	}
+}
+
+func (f *Fake) comment(n, i int, body string) github.Comment {
+	id := commentID(n, i)
+	by := f.CommentBy[id]
+	if by == "" {
+		by = f.Login
+	}
+	assoc := "NONE"
+	if by == f.Login {
+		assoc = "OWNER"
+	}
+	return github.Comment{ID: id, Body: body, User: github.User{Login: by}, AuthorAssociation: assoc}
 }
 
 func str(v any) string { s, _ := v.(string); return s }

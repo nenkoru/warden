@@ -31,6 +31,7 @@ type Client struct {
 	HTTP *http.Client
 
 	token string
+	anon  bool // no token: reads only
 	mu    sync.Mutex
 	login string
 }
@@ -68,6 +69,19 @@ func New(base, repo, tokenFile string) (*Client, error) {
 		base = "https://api.github.com"
 	}
 	return &Client{Base: strings.TrimRight(base, "/"), Repo: repo, HTTP: &http.Client{Timeout: 60 * time.Second}, token: tok}, nil
+}
+
+// Anonymous: a client without a token, for public reads (releases,
+// attestations, labeled issues; 60 requests an hour per address). The guard
+// refuses every write.
+func Anonymous(base, repo string) (*Client, error) {
+	if !validRepo(repo) {
+		return nil, fmt.Errorf("github: repo must be owner/name, not %q", repo)
+	}
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	return &Client{Base: strings.TrimRight(base, "/"), Repo: repo, HTTP: &http.Client{Timeout: 60 * time.Second}, anon: true}, nil
 }
 
 func validRepo(r string) bool {
@@ -113,6 +127,11 @@ func (c *Client) raw(ctx context.Context, path, accept string) (string, error) {
 }
 
 func (c *Client) send(ctx context.Context, method, path, accept string, body, out any) error {
+	return c.sendMax(ctx, method, path, accept, body, out, 16<<20)
+}
+
+// sendMax: send with a cap on the answer's size (a larger answer is an error).
+func (c *Client) sendMax(ctx context.Context, method, path, accept string, body, out any, max int64) error {
 	if why := c.Guard(method, path, body); why != "" {
 		return fmt.Errorf("github %s %s: refused by Warden's guard: %s", method, path, why)
 	}
@@ -128,7 +147,9 @@ func (c *Client) send(ctx context.Context, method, path, accept string, body, ou
 	if err != nil {
 		return fmt.Errorf("github %s %s: %w", method, path, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", version.UserAgent())
@@ -144,9 +165,12 @@ func (c *Client) send(ctx context.Context, method, path, accept string, body, ou
 		return fmt.Errorf("github %s %s: %s", method, path, c.Redact(err.Error()))
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	if err != nil {
 		return fmt.Errorf("github %s %s: %w", method, path, err)
+	}
+	if int64(len(b)) > max {
+		return fmt.Errorf("github %s %s: the answer is larger than %d bytes", method, path, max)
 	}
 	if resp.StatusCode == 404 {
 		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
@@ -293,9 +317,34 @@ type Tag struct {
 }
 
 type Comment struct {
+	ID                int64  `json:"id"`
+	Body              string `json:"body"`
+	User              User   `json:"user"`
+	AuthorAssociation string `json:"author_association"`
+}
+
+// Release: a GitHub release and its assets.
+type Release struct {
+	ID          int64      `json:"id"`
+	TagName     string     `json:"tag_name"`
+	Draft       bool       `json:"draft"`
+	Prerelease  bool       `json:"prerelease"`
+	PublishedAt *time.Time `json:"published_at"`
+	HTMLURL     string     `json:"html_url"`
+	Assets      []Asset    `json:"assets"`
+}
+
+type Asset struct {
 	ID   int64  `json:"id"`
-	Body string `json:"body"`
-	User User   `json:"user"`
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// Attestation: one stored attestation — a Sigstore bundle, inline or behind
+// bundle_url (snappy-compressed).
+type Attestation struct {
+	Bundle    json.RawMessage `json:"bundle"`
+	BundleURL string          `json:"bundle_url"`
 }
 
 // ---- calls
@@ -458,6 +507,29 @@ func (c *Client) Comments(ctx context.Context, n int) ([]Comment, error) {
 	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?per_page=100", n), nil, &cs)
 }
 
+// CommentByID: one issue comment.
+func (c *Client) CommentByID(ctx context.Context, id int64) (Comment, error) {
+	var cm Comment
+	return cm, c.do(ctx, "GET", c.repoPath("/issues/comments/%d", id), nil, &cm)
+}
+
+// EditComment rewrites a comment — only one the token's user wrote: the
+// author is checked first (the guard allows the path, not the author).
+func (c *Client) EditComment(ctx context.Context, id int64, body string) error {
+	me, err := c.Login(ctx)
+	if err != nil {
+		return err
+	}
+	cm, err := c.CommentByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(cm.User.Login, me) {
+		return fmt.Errorf("github: comment %d is @%s's, not this token's (@%s): not editing it", id, cm.User.Login, me)
+	}
+	return c.do(ctx, "PATCH", c.repoPath("/issues/comments/%d", id), map[string]string{"body": c.Redact(body)}, nil)
+}
+
 func (c *Client) AddLabels(ctx context.Context, n int, labels ...string) error {
 	return c.do(ctx, "POST", c.repoPath("/issues/%d/labels", n), map[string][]string{"labels": labels}, nil)
 }
@@ -609,6 +681,27 @@ func (c *Client) CreateTag(ctx context.Context, name, sha string) error {
 func (c *Client) Pin(ctx context.Context, nodeID string) error {
 	q := map[string]any{"query": "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }", "variables": map[string]string{"id": nodeID}}
 	return c.do(ctx, "POST", "/graphql", q, nil)
+}
+
+// Releases: the newest releases (drafts only with a token that may see them).
+func (c *Client) Releases(ctx context.Context) ([]Release, error) {
+	var rs []Release
+	return rs, c.do(ctx, "GET", c.repoPath("/releases?per_page=30"), nil, &rs)
+}
+
+// AssetBytes downloads a release asset through the API (the redirect to the
+// storage host carries no token: Go drops it on a host change), at most max bytes.
+func (c *Client) AssetBytes(ctx context.Context, id, max int64) ([]byte, error) {
+	var b []byte
+	return b, c.sendMax(ctx, "GET", c.repoPath("/releases/assets/%d", id), "application/octet-stream", nil, &b, max)
+}
+
+// Attestations: the attestations stored for a subject digest ("sha256:hex").
+func (c *Client) Attestations(ctx context.Context, digest string) ([]Attestation, error) {
+	var r struct {
+		Attestations []Attestation `json:"attestations"`
+	}
+	return r.Attestations, c.do(ctx, "GET", c.repoPath("/attestations/%s?per_page=30", url.PathEscape(digest)), nil, &r)
 }
 
 // Number parses an issue/PR number.

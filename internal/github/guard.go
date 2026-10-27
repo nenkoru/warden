@@ -24,6 +24,7 @@ var (
 		{"POST", regexp.MustCompile(`^/issues$`)},
 		{"POST", regexp.MustCompile(`^/pulls$`)},
 		{"PATCH", regexp.MustCompile(`^/pulls/\d+$`)},
+		{"PATCH", regexp.MustCompile(`^/issues/comments/\d+$`)}, // own comments only: EditComment checks the author
 		{"POST", regexp.MustCompile(`^/pulls/\d+/reviews$`)},
 		{"PUT", regexp.MustCompile(`^/pulls/\d+/merge$`)},
 		{"POST", regexp.MustCompile(`^/git/refs$`)}, // tags only: checked on the body
@@ -36,6 +37,9 @@ var (
 // Guard says why a request is refused ("" = allowed).
 func (c *Client) Guard(method, path string, body any) string {
 	path, _, _ = strings.Cut(path, "?")
+	if c.anon && method != "GET" {
+		return "an anonymous client only reads"
+	}
 	if path == "/graphql" {
 		q, _ := body.(map[string]any)
 		s, _ := q["query"].(string)
