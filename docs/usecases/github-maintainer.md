@@ -16,7 +16,8 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 3. **Pull requests** (`github-prs`). Warden's own PRs, Dependabot's and those of `trusted_authors` are merged when every
    rule holds (below). Everyone else's get one review comment per head commit, never an approval, never a merge.
 4. **Main** (`github-main`). A red `main` (the latest run of each workflow on its head) is a high finding and blocks
-   releases. Merged PRs since the latest `vX.Y.Z` tag make a release finding.
+   releases; when Warden's own merge turned it red, it reverts that merge (`revert-pr`, see
+   [Quality gates](#quality-gates)). Merged PRs since the latest `vX.Y.Z` tag make a release finding.
 
 ## The acts
 
@@ -24,10 +25,11 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 |---|---|---|
 | `work-issue` | A branch `warden/issue-N-slug` from `main`; the brain edits files through file tools only (Go files are formatted in-process); the token is checked for in the diff; push; a **draft** PR "Closes #N" naming the brain, labeled `warden`. CI runs on it. Red → one fix round from the failed jobs' logs (fenced as data), pushed to the same branch; still red → delegated (if configured) or labeled `needs-human`. Green → marked ready, then `merge-pr`. | `needs_brain`, `max_per_day`, and `max_issues_per_day` |
 | `review-pr` | The diff and the CI results go to the brain, fenced as untrusted; one `COMMENT` review per head SHA; mentions in the text are defused; "@owner, looks good to me" only with green CI and a looks-good verdict. The PR's code is never checked out or run. | `needs_brain` |
-| `merge-pr` | Only own / Dependabot / trusted PRs; every reported check green (and `required_checks` present); mergeable; no `needs-human`; no protected path; not paused (asked again right before merging); a Dependabot major bump (or one it can't read) → `needs-human`. Squash merge, pinned to the head SHA. | `untrusted = "deny"` |
+| `merge-pr` | Only own / Dependabot / trusted PRs; every reported check green (and `required_checks` present); mergeable; no `needs-human`; no protected path; not paused (asked again right before merging); a Dependabot major bump (or one it can't read) → `needs-human`; with `review_brain` set, a second model's looks-good on Warden's own issue PRs. Squash merge, pinned to the head SHA. | `untrusted = "deny"` |
 | `release` | From green `main`, never paused, one a day: the next version from merged PR labels and titles (`feat`/`enhancement` → minor, else patch; breaking → an issue for the owner, never released). A release PR updates `CHANGELOG.md` from the PR titles and links (Keep a Changelog sections, no model). It merges under `merge-pr`'s rules; then Warden tags `vX.Y.Z` on its merge commit through the API, and the repository's release workflow builds it. A failed release workflow is a critical ping. | `untrusted = "deny"` |
 | `delegate` | Hands an issue to another agent of the owner's with `params.delegate_cmd`, an argv template (`{title}`, `{body}`, `{agent}`, `{issue}`, `{url}`, `{repo}`; no shell) — e.g. a team tracker CLI or a chat bridge the image already has. Used for issues labeled per `delegate_labels`, and for hard issues when no paid brain may take them (`delegate_default`). The work comes back as PRs from `trusted_authors`, or as a branch under `pickup_branches` that Warden opens a PR for. | `max_per_day` |
 | `pickup-branch` | A delegate's pushed branch becomes a PR, merged under the same rules as Warden's own. The PR is titled after the branch's commits (one commit: its subject and body; several: the oldest subject and a list of every subject), so the release reads the right bump. | `untrusted = "deny"` |
+| `revert-pr` | Main went red right after a merge of Warden's: a branch `warden/revert-<sha>` from `main` with `git revert` of the merge commit, a (non-draft) PR `Revert "<title>" (#N)` labeled `warden` and `revert`, a comment on the original PR for the owner. `merge-pr` merges it on green like any own PR. | `untrusted = "deny"`, `max_per_day = 3` |
 
 `checks_mode = "ci"` (the default) means Warden never runs repository code where it lives: no Go, node or sandbox
 needed in its image; CI decides. `checks_mode = "local"` runs `params.checks` in the sandbox in the worktree (no
@@ -53,6 +55,50 @@ ready PR.
   owner instead.
 - **Guardrails as config.** Protected paths, merge and release policy (`trusted_authors`, `required_checks`,
   `release = "auto" | "off"`, `max_issues_per_day`) and the budget live in `warden.toml`, which is itself protected.
+
+## Quality gates
+
+Warden merges its own PRs with no human review, so the review is in CI and in the merge policy: `merge-pr` merges
+only when every check named in `required_checks` is present and green. List the gates there, not only the tests:
+
+```toml
+[params]
+required_checks = ["lint", "test (ubuntu-latest)", "test (macos-latest)", "govulncheck", "coverage", "fuzz", "demos (ubuntu-latest)"]
+```
+
+- **Coverage must not drop** (`coverage` job). `go test -race -coverprofile -covermode=atomic ./...`; every push to
+  `main` uploads its total as the artifact `coverage` (`{"total", "sha"}`); a pull request compares its total with
+  the latest green push to `main` (`scripts/covergate`) and fails on a drop of more than 0.1 percentage points. No
+  baseline yet (or an expired artifact) passes with a notice.
+- **Fuzzing** (`fuzz` job). Every Go fuzz target (`func FuzzX`: the manifest, map records and findings, components,
+  templates, feeds, `go.mod`, registry references and the lock file, orders, signal lines, triage) runs for 20s
+  (`scripts/fuzz.sh`; `FUZZTIME` to change it). A crasher lands in `testdata/fuzz/FuzzX/` and is committed with the
+  fix as a regression test.
+- **govulncheck** on every push and pull request, and daily on `main` (`schedule`): a new advisory turns `main` red
+  without anyone pushing, and the red-main finding reaches the owner.
+- **Automatic revert** (`revert-pr`). When `main` turns red and its head is the merge commit of a PR **Warden merged**
+  (GitHub's `merged_by` is Warden's login; an own, Dependabot or trusted PR), a push run failed on it, and `main` was
+  green on its parent, Warden reverts it: `Revert "<title>" (#N)`, "Main went red after #N (failed: <jobs>). This
+  reverts it.", merged on green as an own PR. Once per commit (the finding is keyed on its SHA), at most three a day.
+  Never: the owner's pushes and merges, a revert of a revert, or a red that only a scheduled run found (a new advisory
+  is no fault of the last merge) — those stay a red-main finding for the owner.
+- **A second review** (optional). `review_brain = "<brain name>"` (one of `[brains.*]`): before `merge-pr` merges
+  one of Warden's own `warden/issue-*` PRs, that brain reviews the diff with the reviewer prompt (title, body and diff
+  fenced as untrusted). `VERDICT: looks-good` → the merge goes on; anything else → refused, with the review as a
+  comment on the PR for the owner. The brain unavailable (off-hours, budget) → the merge waits. Empty (the default):
+  off, nothing is called. Pick a different model from the one that writes the code.
+
+**The ruleset the owner creates on `main`** (Settings → Rules; Warden's token has no administration permission):
+require a pull request before merging; require status checks `lint`, `test (ubuntu-latest)`, `test (macos-latest)`,
+`govulncheck`, `coverage`, `fuzz`, `demos (ubuntu-latest)`; block force pushes; restrict deletions. Then Warden's
+merges pass the same gate as everyone's, and `required_checks` names the same checks.
+
+### Not yet: a canary before tagging
+
+Design note (needs the fleet beacons of self-update): before `release` tags `vX.Y.Z` on a release PR's merge commit,
+a canary build of that commit runs on one opted-in instance for a soak period (a few ticks); the tag is created only
+when its beacons report healthy ticks (no crash, no new failed acts, no red self-checks) — otherwise the release PR's
+version is held, a high finding goes to the owner, and the release waits. Until then, tags follow green `main` only.
 
 ## Budget and brains
 
@@ -125,7 +171,8 @@ wake    = { every = "10m" }
 digest  = "daily"
 rules   = [{ act = "release", target = "v*.0.0", then = "deny" },   # majors: never
            { act = "work-issue", then = "auto" }, { act = "review-pr", then = "auto" }, { act = "merge-pr", then = "auto" },
-           { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" }]
+           { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" },
+           { act = "revert-pr", then = "auto" }]
 
 [params]
 repo               = "OWNER/REPO"
@@ -134,6 +181,7 @@ owner              = "OWNER"
 root               = "/state/repo"            # cloned on first use
 max_issues_per_day = "3"
 trusted_authors    = ["my-other-agent"]
+required_checks    = ["lint", "test (ubuntu-latest)", "test (macos-latest)", "govulncheck", "coverage", "fuzz", "demos (ubuntu-latest)"]
 protected          = [".github/**", ".goreleaser.yaml", "SECURITY.md", "LICENSE", "NOTICE", "packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"]
 delegate_cmd       = ["some-cli", "task", "create", "--title", "{title}", "--body", "{body}", "--to", "{agent}"]
 delegate_labels    = { infra = "Ops" }
@@ -151,9 +199,10 @@ Start with `mode = "dry-run"` for a day and read the reports.
    Administration. Short expiry; rotate it by replacing the file.
 2. **An Anthropic API key** (only if you configure a paid brain) in a dedicated Console workspace with a monthly spend
    limit — the outer backstop behind Warden's own daily cap.
-3. **A branch protection rule or ruleset on `main`**: require a pull request, require the CI status checks, block
-   force pushes and deletions. Warden's merges then go through the same gate as everyone's.
-4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `warden-log` (GitHub
+3. **A branch protection rule or ruleset on `main`**: require a pull request, require the CI status checks (the list
+   in [Quality gates](#quality-gates), including `coverage` and `fuzz`), block force pushes and deletions. Warden's
+   merges then go through the same gate as everyone's.
+4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `revert`, `warden-log` (GitHub
    creates missing labels when Warden adds them).
 
 ## Deploy on Kubernetes

@@ -33,6 +33,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Instance params accept arrays and tables (passed to packs as JSON).
 - `pickup-branch` titles the PR after the branch's commits (one commit: its subject and body; several: the oldest
   subject and a list of all), so releases count it right; the generic title stays the fallback.
+- Quality gates for a repository Warden merges into by itself: CI jobs `coverage` (the total may not drop more than
+  0.1 points below the latest green `main`; `scripts/covergate`) and `fuzz` (every Go fuzz target for 20s;
+  `scripts/fuzz.sh`), govulncheck daily on `main`; native fuzz targets for the manifest and map parsers, feeds,
+  `go.mod`, registry references and the lock file, orders, signal lines and triage. `required_checks` should name
+  `coverage` and `fuzz`; the docs list the ruleset to create on `main`.
+- `revert-pr` in the `github-repo` pack: when `main` turns red right after a merge Warden made (and was green before
+  it), a `Revert "…" (#N)` PR merged on green, and a comment on the original PR for the owner. Never the owner's own
+  pushes or merges.
+- `review_brain` (`github-repo`, off by default): a second model reviews Warden's own issue PRs before it merges them;
+  anything but looks-good stops the merge with a comment.
 
 ### Security
 
