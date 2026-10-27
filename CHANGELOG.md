@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `foreach` on observe and inventory steps: run a step once per value of a list param
+  (`foreach = { namespace = "{namespaces}" }`); findings carry the bound value, so an act on one runs where it was
+  seen. The `k8s-namespace` pack uses it to watch a project's several namespaces (`namespaces`) with only a
+  namespaced `view` in each, and now also reports failed Jobs (keyed by their CronJob), and inventories init
+  containers' and CronJob templates' images and Helm charts (from the `helm.sh/chart` label).
+
 - The `github-repo` pack: Warden maintains one GitHub repository — issues worked into draft PRs (`work-issue`, CI
   decides, one fix round from the failed jobs' logs), outside PRs reviewed with one `COMMENT` per head commit
   (`review-pr`, never merged, their code never run), its own, Dependabot's and `trusted_authors`' PRs squash-merged on
