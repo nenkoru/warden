@@ -15,6 +15,9 @@ type Task struct {
 	Brain, Model   string // the latest
 	Attempts       int    // work-issue runs: the first attempt and fix rounds
 	FixRounds      int
+	Steps          int // model turns
+	ToolCalls      int
+	ToolCallErrors int // unknown tools and arguments that did not parse
 	WallMS         int64
 	TokensIn       int64
 	TokensOut      int64
@@ -153,6 +156,10 @@ func add(t *Task, e Event) {
 	if e.Model != "" {
 		t.Model = e.Model
 	}
+	n := func(k string) int { v, _ := strconv.Atoi(e.Data[k]); return v }
+	t.Steps += n("steps")
+	t.ToolCalls += n("tool_calls")
+	t.ToolCallErrors += n("unknown_tool") + n("bad_args")
 	t.WallMS += e.WallMS
 	t.TokensIn += e.TokensIn
 	t.TokensOut += e.TokensOut
@@ -218,6 +225,7 @@ type Summary struct {
 	Tasks, Merged, Reverted int
 	Green, Pushed           int     // tasks green on the first push, of those whose first push is known
 	AvgAttempts, AvgFix     float64 // over tasks with an attempt in the period
+	ToolCalls, CallErrors   int     // every tool call; unknown tools and bad arguments
 	MedianWallMS            int64   // over tasks with wall time in the period
 	TokensIn, TokensOut     int64
 	TopFailures             string // "wrong-edit 2, loop 1"
@@ -250,6 +258,8 @@ func (p Period) Summary() Summary {
 		if t.WallMS > 0 {
 			walls = append(walls, t.WallMS)
 		}
+		s.ToolCalls += t.ToolCalls
+		s.CallErrors += t.ToolCallErrors
 		s.TokensIn += t.TokensIn
 		s.TokensOut += t.TokensOut
 	}

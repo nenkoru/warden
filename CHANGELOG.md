@@ -33,8 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   first push, fix rounds, review comments and failure categories (`tool-call`, `context-limit`, `wrong-edit`, `loop`,
   `timeout`, `gave-up`); the brain's off-hours are recorded as idle time, never as failures. A new act `publish-log`
   and observer `github-experiment` publish the log once a day as `docs/experiment-27b.md` in its own PR, merged on
-  green CI (`internal/experiment`; params `experiment_doc`, `experiment_tz`, `experiment_acts`). Built-in acts can
-  return task data (`Result.Data`); `github.Client.Reviews`.
+  green CI (`internal/experiment`; params `experiment_doc`, `experiment_tz`, `experiment_acts`,
+  `experiment_context_tokens`). Built-in acts can return task data (`Result.Data`); `github.Client.Reviews`.
+- `brain.WithStats`: endpoint brains count each call's model turns, tool calls (unknown tools, arguments that are not
+  JSON, failed tools, repeats), the largest prompt and how the last turn ended; ACP brains count the agent's tool
+  calls and stop reason. The experiment log shows steps and tool-call errors per task and per tool call per week.
 - `digest = "daily"`: a `Digest` hook event once a day with the day's summary.
 - Floors `untrusted = "deny"` (a finding carrying untrusted input never drives the act), `needs_brain`, `clean_env`;
   the sandbox can open loopback ports (a local metering proxy) and hide credential files.

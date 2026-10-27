@@ -34,6 +34,7 @@ pause_label        = "warden-pause"
 experiment_log     = "on"                # on: every task (an issue worked across ticks) is recorded in <state>/tasks.jsonl and published daily (publish-log)
 experiment_doc     = "docs/experiment-27b.md"  # where publish-log writes the log (never a protected path)
 experiment_tz      = ""                  # the IANA zone for the log's days and weeks (default: the machine's), e.g. Europe/Moscow
+experiment_context_tokens = "262144"  # the coding model's context: a failed attempt whose prompt reached 90% of it counts context-limit
 experiment_acts    = ""                  # acts whose results are task records (default: work-issue, merge-pr, pickup-branch)
 
 # The kill switch, checked first every tick: any finding → this tick only

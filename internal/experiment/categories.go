@@ -7,10 +7,10 @@ import (
 
 // The failure categories, in the order the report lists them.
 const (
-	ToolCall     = "tool-call"     // invalid tool arguments, an unknown tool, tool runs that failed
-	ContextLimit = "context-limit" // the prompt outgrew the model's context
+	ToolCall     = "tool-call"     // an unknown tool, arguments that are not a JSON object
+	ContextLimit = "context-limit" // the prompt outgrew (or neared) the model's context
 	WrongEdit    = "wrong-edit"    // CI or the local checks red after the change, no change, a protected path
-	Loop         = "loop"          // max_steps, the same tool call over and over
+	Loop         = "loop"          // max_steps, the same tool call again and again
 	Timeout      = "timeout"       // a deadline
 	GaveUp       = "gave-up"       // handed to the owner, or the model said it can't
 	Other        = "other"         // a failure none of the above explains
@@ -33,10 +33,15 @@ var patterns = []struct {
 	{GaveUp, regexp.MustCompile(`(?i)\bi can(?:not|'t|’t)\b|\bi(?: am|'m|’m) (?:unable|not able)\b|\bunable to (?:complete|do|make|implement|fix)\b|\bwill not make\b`)},
 }
 
+// DefaultContextTokens: the model's context when data has no context_tokens.
+const DefaultContextTokens = 262144
+
 // Categories: why an act on a task failed, from its phase, outcome, text
-// (summary, log, errors) and data; several may hold; none for a success.
-// A fix round always counts wrong-edit (CI was red after the push); a
-// give-up always counts gave-up.
+// (summary, log, errors) and data (the brain's counts: unknown_tool,
+// bad_args, repeats, finish_reason, max_prompt_tokens against
+// context_tokens); several may hold; none for a success. A fix round always
+// counts wrong-edit (CI was red after the push); a give-up always counts
+// gave-up.
 func Categories(phase string, ok bool, text string, data map[string]string) []string {
 	hit := map[string]bool{}
 	switch phase {
@@ -51,11 +56,19 @@ func Categories(phase string, ok bool, text string, data map[string]string) []st
 				hit[p.cat] = true
 			}
 		}
-		if n, _ := strconv.Atoi(data["tool_errors"]); n > 0 {
+		num := func(k string) int64 { n, _ := strconv.ParseInt(data[k], 10, 64); return n }
+		if num("unknown_tool")+num("bad_args") > 0 {
 			hit[ToolCall] = true
 		}
-		if n, _ := strconv.Atoi(data["repeated_calls"]); n >= 3 {
+		if num("repeats") >= 2 || data["finish_reason"] == "max_steps" {
 			hit[Loop] = true
+		}
+		limit := num("context_tokens")
+		if limit <= 0 {
+			limit = DefaultContextTokens
+		}
+		if p := num("max_prompt_tokens"); p*10 >= limit*9 { // within 10% of the context
+			hit[ContextLimit] = true
 		}
 		if len(hit) == 0 {
 			hit[Other] = true

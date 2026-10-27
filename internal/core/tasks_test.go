@@ -78,7 +78,9 @@ tz = "Europe/Moscow"
 	e := evs[2]
 	if e.Kind != "act" || e.Act != "work-issue" || e.Issue != 1 || e.PR != 2 || e.Phase != "new" || e.Brain != "local" || e.Model != "qwen3.8-27b-local" ||
 		!e.OK || e.Calls != 1 || e.TokensIn != 250 || e.TokensOut != 25 || e.WallMS < 0 || len(e.Categories) != 0 ||
-		e.Data["files"] != "1" || e.Data["size"] != "S" || e.Data["tool_calls"] != "1" || e.Data["tool_errors"] != "0" || !strings.Contains(e.Summary, "draft PR #2 for issue #1") {
+		e.Data["files"] != "1" || e.Data["size"] != "S" || e.Data["tool_calls"] != "1" || e.Data["tool_errors"] != "0" ||
+		e.Data["steps"] != "2" || e.Data["unknown_tool"] != "0" || e.Data["bad_args"] != "0" || e.Data["max_prompt_tokens"] != "150" || e.Data["finish_reason"] != "stop" ||
+		!strings.Contains(e.Summary, "draft PR #2 for issue #1") {
 		t.Fatalf("the attempt's record: %+v", e)
 	}
 

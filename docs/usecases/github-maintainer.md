@@ -167,25 +167,27 @@ Every two or three days the owner and Claude read the published log and tune the
   (`revert`) — appends one line to `<state>/tasks.jsonl` (append-only, `0600`): the issue and PR, the brain and its
   model, ok/refused, a short summary, wall time, tokens in/out and calls (the difference of the brains' usage around
   the act), and the act's own data: size (`small` / `size:S|M|L|XL` labels, else the diff: under 50 changed lines S,
-  200 M, 800 L, else XL), files, lines added/deleted, tool runs and tool errors (the coder's file tools are counted),
-  the longest run of identical tool calls, CI on the first push (green: merged without a fix round), the fix round,
+  200 M, 800 L, else XL), files, lines added/deleted, the brain's own counts (`brain.WithStats`: model turns, tool
+  calls, calls to an unknown tool, arguments that are not a JSON object, tools that ran and failed, calls repeating
+  the one before, the largest prompt, how the last turn ended), CI on the first push (green: merged without a fix round), the fix round,
   and at the merge the comments and reviews people other than Warden left. `experiment_acts` names the acts recorded
   (default `work-issue`, `merge-pr`, `pickup-branch`); an act deferred before any model call (CI running) is not an
   attempt. A merged PR titled `Revert "…"` that undoes a `warden/issue-*` PR (GitHub's revert branch, the quoted
   title, or its number in the title) is recorded once as the task's revert.
-- **Failure categories**, several per failure, from the act's summary, log and data: `tool-call` (an unknown tool,
-  arguments that are not JSON, tool errors on a failed attempt), `context-limit` (context length, too many tokens,
-  prompt too long), `wrong-edit` (CI red after the push — every fix round —, local checks red, no change, a protected
-  path), `loop` (`max_steps`, three or more identical tool calls in a row), `timeout`, `gave-up` (handed to the owner,
-  or the model says it can't), `other`.
+- **Failure categories**, several per failure, from the act's summary, log and data: `tool-call` (calls to an
+  unknown tool or with arguments that are not JSON), `context-limit` (context length, too many tokens, prompt too
+  long, or a prompt that reached 90% of `experiment_context_tokens`, default 262144), `wrong-edit` (CI red after the
+  push — every fix round —, local checks red, no change, a protected path), `loop` (`max_steps`, two or more calls
+  repeating the one before), `timeout`, `gave-up` (handed to the owner, or the model says it can't), `other`.
 - **Idle time is not failure.** Each tick in which the `work-issue` brain may not work — off-hours, its upstream
   unavailable, the budget spent — adds the minutes since the previous tick (at most one wake interval) as an `idle`
   record. Brain acts wait meanwhile; nothing counts as an attempt.
 - **Publishing.** The `experiment` observer proposes `publish-log` once a day (in `experiment_tz`) when there are
   records, no `warden/experiment-*` PR is open and today's log isn't out yet. The act renders `experiment_doc`
   (default `docs/experiment-27b.md`, never a protected path): a weekly summary (tasks, merged, first-push green %,
-  average attempts and fix rounds, median wall time, tokens, reverts, top failure categories, idle hours), then each
-  day newest first with its tasks, its failures with one-line reasons, and its idle hours. Its PR touches only that
+  average attempts and fix rounds, median wall time, tokens, tool-call errors per tool call, reverts, top failure
+  categories, idle hours), then each day newest first with its tasks (steps, tool calls and tool-call errors among
+  them), its failures with one-line reasons, and its idle hours. Its PR touches only that
   file, so `merge-pr` merges it on green CI; the log PRs never trigger a release. `experiment_log = "off"` stops the
   records and the publishing.
 

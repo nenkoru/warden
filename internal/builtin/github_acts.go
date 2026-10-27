@@ -2,7 +2,6 @@ package builtin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"go/format"
@@ -12,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/nenkoru/warden/internal/brain"
@@ -108,53 +106,18 @@ func coderTools(wt string, env *Env) []brain.Tool {
 	return append(out, env.Tools...)
 }
 
-// runCoder: one coding run of a brain in the worktree; st counts its tool runs.
-func runCoder(ctx context.Context, env *Env, nb NamedBrain, wt, task string, st *toolStats) (string, error) {
-	return nb.Brain.Do(brain.WithDir(ctx, wt), systemPrompt(coderPrompt(env), env), task, st.wrap(coderTools(wt, env)))
+// runCoder: one coding run of a brain in the worktree; st counts its turns
+// and tool calls.
+func runCoder(ctx context.Context, env *Env, nb NamedBrain, wt, task string, st *brain.Stats) (string, error) {
+	return nb.Brain.Do(brain.WithStats(brain.WithDir(ctx, wt), st), systemPrompt(coderPrompt(env), env), task, coderTools(wt, env))
 }
 
-// toolStats: what the coder's tool runs did, for the experiment log.
-type toolStats struct {
-	mu               sync.Mutex
-	calls, errors    int
-	repeated, streak int // the longest run of identical consecutive calls; the current one
-	last             string
-}
-
-func (s *toolStats) wrap(tools []brain.Tool) []brain.Tool {
-	out := make([]brain.Tool, len(tools))
-	for i, t := range tools {
-		if run := t.Run; run != nil {
-			t.Run = func(ctx context.Context, args map[string]any) (string, bool) {
-				res, ok := run(ctx, args)
-				sig, _ := json.Marshal(args)
-				s.mu.Lock()
-				defer s.mu.Unlock()
-				s.calls++
-				if !ok {
-					s.errors++
-				}
-				if k := t.Name + " " + string(sig); k == s.last {
-					s.streak++
-				} else {
-					s.last, s.streak = k, 1
-				}
-				s.repeated = max(s.repeated, s.streak)
-				return res, ok
-			}
-		}
-		out[i] = t
+// coderData: an attempt's brain counts and the context they are measured against.
+func coderData(env *Env, st *brain.Stats, d map[string]string) {
+	for k, v := range st.Data() {
+		d[k] = v
 	}
-	return out
-}
-
-func (s *toolStats) fill(d map[string]string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	d["tool_calls"], d["tool_errors"] = strconv.Itoa(s.calls), strconv.Itoa(s.errors)
-	if s.repeated > 1 {
-		d["repeated_calls"] = strconv.Itoa(s.repeated)
-	}
+	d["context_tokens"] = strconv.Itoa(intParam(env, "experiment_context_tokens", 262144))
 }
 
 // gofmtChanged formats the changed Go files in-process (go/format: nothing
@@ -211,9 +174,9 @@ func workIssue(ctx context.Context, c *github.Client, f domain.Finding, env *Env
 	}
 	nb := route.Brains[0]
 	data := map[string]string{"issue": strconv.Itoa(n), "phase": "new", "brain": nb.Name}
-	st := &toolStats{}
+	st := &brain.Stats{}
 	defer func() { // what this attempt did, for the experiment log
-		st.fill(data)
+		coderData(env, st, data)
 		data["brain"] = nb.Name
 		if s := issueSize(labels, data); s != "" {
 			data["size"] = s
@@ -386,8 +349,8 @@ func fixRound(ctx context.Context, c *github.Client, f domain.Finding, env *Env)
 	nb := route.Brains[len(route.Brains)-1] // the escalation, when there is one
 	// CI was red on the push before this round: the task's first push was red
 	data := map[string]string{"issue": strconv.Itoa(n), "pr": strconv.Itoa(prn), "phase": "fix", "brain": nb.Name, "ci_first_push": "red", "fix_round": "1"}
-	st := &toolStats{}
-	defer func() { st.fill(data); result.Data = data }()
+	st := &brain.Stats{}
+	defer func() { coderData(env, st, data); result.Data = data }()
 	logs, err := c.FailedLogs(ctx, pr.Head.SHA, 8000)
 	if err != nil {
 		logs = "(the logs could not be fetched: " + err.Error() + ")"

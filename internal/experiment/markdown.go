@@ -14,8 +14,8 @@ const intro = "Warden maintains this repository with a local model doing all of 
 	"Every task — an issue Warden works, from the first attempt through fix rounds to the merge, a give-up or a revert — " +
 	"is recorded in Warden's state and rendered here once a day by its `publish-log` act. The owner and Claude read it " +
 	"every two or three days to tune the prompts, tools, context and skills. How to read it: the weekly summary first " +
-	"(first-push green is the share of PRs whose CI passed without a fix round; wall time and tokens are the model's " +
-	"work on the task), then each day's tasks and its failures with their categories (tool-call, context-limit, " +
+	"(first-push green is the share of PRs whose CI passed without a fix round; tool-call errors are calls to a tool " +
+	"that does not exist or with arguments that do not parse, per tool call; wall time and tokens are the model's work on the task), then each day's tasks and its failures with their categories (tool-call, context-limit, " +
 	"wrong-edit, loop, timeout, gave-up, other) and one-line reasons. Idle hours are the model's off-hours, an " +
 	"unreachable upstream or a spent budget: time it could not work, never a failure. \"so far\" marks the period " +
 	"still running."
@@ -39,16 +39,20 @@ func (r Report) Markdown(now time.Time) string {
 	if len(r.Weeks) == 0 {
 		b.WriteString("Nothing recorded yet.\n")
 	} else {
-		b.WriteString("| week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | reverted | top failures | idle hours |\n")
-		b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|\n")
+		b.WriteString("| week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | tool-call errors / call | reverted | top failures | idle hours |\n")
+		b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 		for _, w := range r.Weeks {
 			s := w.Summary()
 			green := "—"
 			if s.Pushed > 0 {
 				green = fmt.Sprintf("%d%% (%d/%d)", s.Green*100/s.Pushed, s.Green, s.Pushed)
 			}
-			fmt.Fprintf(&b, "| %s | %d | %d | %s | %.1f | %.1f | %s | %s / %s | %d | %s | %.1f |\n", label(w.Name, week), s.Tasks, s.Merged, green,
-				s.AvgAttempts, s.AvgFix, dur(s.MedianWallMS), tokens(s.TokensIn), tokens(s.TokensOut), s.Reverted, or(s.TopFailures, "—"), w.IdleHours())
+			perCall := "—"
+			if s.ToolCalls > 0 {
+				perCall = fmt.Sprintf("%.2f (%d/%d)", float64(s.CallErrors)/float64(s.ToolCalls), s.CallErrors, s.ToolCalls)
+			}
+			fmt.Fprintf(&b, "| %s | %d | %d | %s | %.1f | %.1f | %s | %s / %s | %s | %d | %s | %.1f |\n", label(w.Name, week), s.Tasks, s.Merged, green,
+				s.AvgAttempts, s.AvgFix, dur(s.MedianWallMS), tokens(s.TokensIn), tokens(s.TokensOut), perCall, s.Reverted, or(s.TopFailures, "—"), w.IdleHours())
 		}
 	}
 	if len(r.Days) > 0 {
@@ -59,15 +63,15 @@ func (r Report) Markdown(now time.Time) string {
 		if len(d.Tasks) == 0 {
 			b.WriteString("No task worked.\n")
 		} else {
-			b.WriteString("| task | PR | size | brain / model | attempts | wall time | tokens in / out | CI first push | fix rounds | merged | reverted | review comments | failures |\n")
-			b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+			b.WriteString("| task | PR | size | brain / model | attempts | steps | tool calls | tool-call errors | wall time | tokens in / out | CI first push | fix rounds | merged | reverted | review comments | failures |\n")
+			b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 			for _, t := range d.Tasks {
 				pr := "—"
 				if t.PR > 0 {
 					pr = fmt.Sprintf("#%d", t.PR)
 				}
-				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %s | %s / %s | %s | %d | %s | %s | %d | %s |\n", t.Name(), pr, or(t.Size, "—"),
-					cell(or(strings.Trim(t.Brain+" / "+t.Model, " /"), "—")), t.Attempts, dur(t.WallMS), tokens(t.TokensIn), tokens(t.TokensOut),
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %d | %d | %d | %s | %s / %s | %s | %d | %s | %s | %d | %s |\n", t.Name(), pr, or(t.Size, "—"),
+					cell(or(strings.Trim(t.Brain+" / "+t.Model, " /"), "—")), t.Attempts, t.Steps, t.ToolCalls, t.ToolCallErrors, dur(t.WallMS), tokens(t.TokensIn), tokens(t.TokensOut),
 					or(t.FirstPush, "—"), t.FixRounds, yes(t.Merged), yes(t.Reverted), t.ReviewComments, or(strings.Join(t.Categories, ", "), "—"))
 			}
 		}

@@ -75,7 +75,8 @@ func TestTaskDataAcrossFixGiveUpAndMerge(t *testing.T) {
 	w.env.Brains = brains(coder, nil)
 	f := fixOf(w.observe("github-issues"), "work-issue")
 	r := Act(context.Background(), "work-issue", nil, *f, w.env)
-	if !r.OK || r.Data["size"] != "XL" || r.Data["tool_calls"] != "4" || r.Data["tool_errors"] != "3" || r.Data["repeated_calls"] != "3" {
+	if !r.OK || r.Data["size"] != "XL" || r.Data["tool_calls"] != "4" || r.Data["tool_errors"] != "3" || r.Data["repeats"] != "2" || r.Data["steps"] != "1" ||
+		r.Data["unknown_tool"] != "0" || r.Data["context_tokens"] != "262144" {
 		t.Fatalf("new: %+v", r)
 	}
 	var prn int

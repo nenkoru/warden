@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func TestAnthropicToolLoop(t *testing.T) {
 			if b["system"] != "sys" || b["model"] != "claude-opus-5-5" {
 				t.Errorf("body: %v", b)
 			}
-			return 200, `{"content":` + turn1 + `,"stop_reason":"tool_use"}`
+			return 200, `{"content":` + turn1 + `,"stop_reason":"tool_use","usage":{"input_tokens":100,"cache_read_input_tokens":900,"output_tokens":5}}`
 		},
 		func(h http.Header, b map[string]any) (int, string) {
 			msgs := b["messages"].([]any)
@@ -104,11 +105,13 @@ func TestAnthropicToolLoop(t *testing.T) {
 		},
 	)
 	var log strings.Builder
+	st := &Stats{}
 	out, err := Endpoint(EndpointConfig{Provider: "anthropic", BaseURL: srv.URL + "/", APIKeyEnv: "TEST_KEY", Log: &log}).
-		Do(context.Background(), "sys", "task", []Tool{echo})
+		Do(WithStats(context.Background(), st), "sys", "task", []Tool{echo})
 	if err != nil || out != "looking done." {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
+	jsonEq(t, st.Data(), `{"steps":"3","tool_calls":"2","unknown_tool":"1","bad_args":"0","tool_errors":"0","repeats":"0","max_prompt_tokens":"1000","finish_reason":"end_turn"}`)
 	if s.n != 3 || !strings.Contains(log.String(), "echo → echo:hi") {
 		t.Errorf("requests=%d log=%q", s.n, log.String())
 	}
@@ -217,11 +220,36 @@ func TestOpenAIToolLoop(t *testing.T) {
 			return 200, `{"choices":[{"message":{"role":"assistant","content":"final"},"finish_reason":"stop"}]}`
 		},
 	)
+	st := &Stats{}
 	out, err := Endpoint(EndpointConfig{Provider: "openai", BaseURL: srv.URL, Model: "m", APIKeyEnv: "TEST_KEY"}).
-		Do(context.Background(), "sys", "task", []Tool{echo})
+		Do(WithStats(context.Background(), st), "sys", "task", []Tool{echo})
 	if err != nil || out != "final" || s.n != 2 {
 		t.Fatalf("out=%q err=%v n=%d", out, err, s.n)
 	}
+	jsonEq(t, st.Data(), `{"steps":"2","tool_calls":"2","unknown_tool":"0","bad_args":"1","tool_errors":"0","repeats":"0","max_prompt_tokens":"0","finish_reason":"stop"}`)
+}
+
+// A model that repeats one failing call until max_steps: every call counted
+// as failed and repeated, the largest prompt kept, the end is max_steps.
+func TestEndpointStatsLoop(t *testing.T) {
+	again := func(prompt int) func(http.Header, map[string]any) (int, string) {
+		return func(http.Header, map[string]any) (int, string) {
+			return 200, `{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"echo","arguments":"{\"msg\":1}"}}]},"finish_reason":"tool_calls"}],` +
+				`"usage":{"prompt_tokens":` + strconv.Itoa(prompt) + `,"completion_tokens":3}}`
+		}
+	}
+	srv, _ := serve(t, again(10), again(300), again(20))
+	st := &Stats{}
+	ctx := WithStats(context.Background(), st)
+	_, err := Endpoint(EndpointConfig{Provider: "openai", BaseURL: srv.URL, Model: "m", MaxSteps: 3}).Do(ctx, "", "task", []Tool{echo})
+	if err == nil || !strings.Contains(err.Error(), "max_steps") {
+		t.Fatalf("err=%v", err)
+	}
+	jsonEq(t, st.Data(), `{"steps":"3","tool_calls":"3","unknown_tool":"0","bad_args":"0","tool_errors":"3","repeats":"2","max_prompt_tokens":"300","finish_reason":"max_steps"}`)
+	if StatsFrom(context.Background()) != nil || (*Stats)(nil).Data() != nil {
+		t.Fatal("no Stats: nothing counted, nothing to read")
+	}
+	StatsFrom(context.Background()).Call("x", "", CallOK) // a nil sink is safe
 }
 
 func TestNormalize(t *testing.T) {

@@ -111,13 +111,22 @@ func (e *endpoint) Do(ctx context.Context, system, task string, tools []Tool) (s
 	return e.openai(ctx, system, task, tools)
 }
 
-func (e *endpoint) run(ctx context.Context, tools []Tool, name string, args map[string]any) (string, bool) {
-	out, ok := "error: unknown tool "+name, false
+// run runs one tool call and counts it in ctx's Stats (raw: the arguments' text).
+func (e *endpoint) run(ctx context.Context, tools []Tool, name string, args map[string]any, raw string) (string, bool) {
+	out, ok, how := "error: unknown tool "+name, false, CallUnknown
 	if t := find(tools, name); t != nil && t.Run != nil {
 		out, ok = t.Run(ctx, args)
+		how = map[bool]CallOutcome{true: CallOK, false: CallFailed}[ok]
 	}
+	StatsFrom(ctx).Call(name, raw, how)
 	fmt.Fprintf(e.cfg.Log, "warden brain: %s → %s\n", name, firstLine(out))
 	return out, ok
+}
+
+// maxSteps: the loop ran out of turns.
+func (e *endpoint) maxSteps(ctx context.Context) error {
+	StatsFrom(ctx).Finish("max_steps")
+	return fmt.Errorf("stopped after %d steps (max_steps)", e.cfg.MaxSteps)
 }
 
 // record tells the meter one response's usage; model "" is the configured one.
@@ -229,6 +238,9 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 		}
 		e.record(resp.Model, meter.Usage{Input: resp.Usage.Input, Output: resp.Usage.Output,
 			CacheRead: resp.Usage.CacheRead, CacheWrite: resp.Usage.CacheWrite})
+		st := StatsFrom(ctx)
+		st.Step(resp.Usage.Input + resp.Usage.CacheRead + resp.Usage.CacheWrite)
+		st.Finish(resp.StopReason)
 		var blocks []struct {
 			Type  string         `json:"type"`
 			Text  string         `json:"text"`
@@ -246,7 +258,8 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 			case "text":
 				text.WriteString(bl.Text)
 			case "tool_use":
-				out, ok := e.run(ctx, tools, bl.Name, bl.Input)
+				raw, _ := json.Marshal(bl.Input)
+				out, ok := e.run(ctx, tools, bl.Name, bl.Input, string(raw))
 				results = append(results, map[string]any{"type": "tool_result", "tool_use_id": bl.ID, "content": out, "is_error": !ok})
 			}
 		}
@@ -263,7 +276,7 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 			return text.String(), nil
 		}
 	}
-	return text.String(), fmt.Errorf("stopped after %d steps (max_steps)", e.cfg.MaxSteps)
+	return text.String(), e.maxSteps(ctx)
 }
 
 // ---- OpenAI-compatible Chat Completions
@@ -304,6 +317,11 @@ func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool
 			return text.String(), err
 		}
 		e.record(resp.Model, meter.Usage{Input: resp.Usage.Prompt, Output: resp.Usage.Completion})
+		st := StatsFrom(ctx)
+		st.Step(resp.Usage.Prompt)
+		if len(resp.Choices) > 0 {
+			st.Finish(resp.Choices[0].FinishReason)
+		}
 		if len(resp.Choices) == 0 {
 			return text.String(), errors.New("no choices in the response")
 		}
@@ -342,12 +360,13 @@ func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool
 			}
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
 				out = "error: arguments are not a JSON object: " + err.Error()
+				st.Call(tc.Function.Name, raw, CallBadArgs)
 				fmt.Fprintf(e.cfg.Log, "warden brain: %s → %s\n", tc.Function.Name, out)
 			} else {
-				out, _ = e.run(ctx, tools, tc.Function.Name, args)
+				out, _ = e.run(ctx, tools, tc.Function.Name, args, raw)
 			}
 			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": tc.ID, "content": out})
 		}
 	}
-	return text.String(), fmt.Errorf("stopped after %d steps (max_steps)", e.cfg.MaxSteps)
+	return text.String(), e.maxSteps(ctx)
 }

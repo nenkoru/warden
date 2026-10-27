@@ -146,11 +146,25 @@ type coderBrain struct {
 	fn    func(task string, tools []brain.Tool) string
 }
 
-func (b *coderBrain) Do(_ context.Context, system, task string, tools []brain.Tool) (string, error) {
+// Do: one turn; the tool calls fn makes are counted as an endpoint would.
+func (b *coderBrain) Do(ctx context.Context, system, task string, tools []brain.Tool) (string, error) {
 	b.calls++
 	b.sys = system
 	b.tasks = append(b.tasks, task)
-	return b.fn(task, tools), nil
+	st := brain.StatsFrom(ctx)
+	st.Step(int64(len(system)+len(task)) / 4)
+	counted := make([]brain.Tool, len(tools))
+	for i, t := range tools {
+		run := t.Run
+		t.Run = func(ctx context.Context, args map[string]any) (string, bool) {
+			out, ok := run(ctx, args)
+			raw, _ := json.Marshal(args)
+			st.Call(t.Name, string(raw), map[bool]brain.CallOutcome{true: brain.CallOK, false: brain.CallFailed}[ok])
+			return out, ok
+		}
+		counted[i] = t
+	}
+	return b.fn(task, counted), nil
 }
 
 func use(tools []brain.Tool, name string, args map[string]any) string {
