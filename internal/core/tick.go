@@ -13,6 +13,7 @@ import (
 	"github.com/nenkoru/warden/internal/builtin"
 	"github.com/nenkoru/warden/internal/domain"
 	"github.com/nenkoru/warden/internal/policy"
+	"github.com/nenkoru/warden/internal/version"
 )
 
 // Item: one finding through the loop.
@@ -636,7 +637,7 @@ func askPayload(in *Instance, it *Item) map[string]any {
 		what = it.Fix.What
 	}
 	return map[string]any{"id": it.Pending, "title": it.Title, "what": what, "why": strings.Join(it.Reasons, "; "),
-		"approve": "warden approve " + it.Pending, "decline": "warden decline " + it.Pending, "name": in.Cfg.Name}
+		"approve": "warden approve " + it.Pending, "decline": "warden decline " + it.Pending, "name": in.Cfg.Name, "version": version.Version}
 }
 
 func or(xs ...string) string {
