@@ -57,5 +57,5 @@ changelog:
       - "^chore:"
 
 release:
-  draft: true                 # the maintainer reviews and publishes
+  draft: false                # published: self-update never sees drafts; the canary gate replaces the review
   prerelease: auto

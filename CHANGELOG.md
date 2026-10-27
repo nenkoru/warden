@@ -60,6 +60,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Releases are published, not drafts (`.goreleaser.yaml` `release.draft: false`; prereleases stay marked by
+  `prerelease: auto`): self-update cannot see drafts, and the canary gate replaces the owner's review of a draft.
 - The GitHub guard lets `POST …/git/refs` create `refs/tags/vX.Y.Z-rc.N` as well as `refs/tags/vX.Y.Z` (nothing else).
 
 ### Security
