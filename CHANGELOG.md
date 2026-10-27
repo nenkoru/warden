@@ -27,6 +27,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `free_models`, `upstream_proxy`). Endpoint brains are metered per call (LiteLLM's `x-litellm-response-cost` wins over
   the price table), a Claude Code ACP brain through the meter's local proxy; over the cap no paid model is called and
   brain acts are refused; alerts ping at once; every report header says `model spend today: $X of $Y`.
+- The 27B experiment log (`github-repo` pack, `experiment_log = "on"`): every act on a task (an issue worked across
+  ticks: the first attempt, the fix round, the give-up, the merge, a revert of Warden's PR) appends a record to
+  `<state>/tasks.jsonl` with its brain and model, wall time, tokens, size, files and lines, tool errors, CI on the
+  first push, fix rounds, review comments and failure categories (`tool-call`, `context-limit`, `wrong-edit`, `loop`,
+  `timeout`, `gave-up`); the brain's off-hours are recorded as idle time, never as failures. A new act `publish-log`
+  and observer `github-experiment` publish the log once a day as `docs/experiment-27b.md` in its own PR, merged on
+  green CI (`internal/experiment`; params `experiment_doc`, `experiment_tz`, `experiment_acts`). Built-in acts can
+  return task data (`Result.Data`); `github.Client.Reviews`.
 - `digest = "daily"`: a `Digest` hook event once a day with the day's summary.
 - Floors `untrusted = "deny"` (a finding carrying untrusted input never drives the act), `needs_brain`, `clean_env`;
   the sandbox can open loopback ports (a local metering proxy) and hide credential files.

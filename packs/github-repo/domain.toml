@@ -31,7 +31,9 @@ delegate_labels    = ""                  # label → agent, e.g. { infra = "Ops"
 delegate_default   = ""                  # the agent for hard issues when no paid brain may take them
 pickup_branches    = ""                  # branch prefixes a delegate pushes to; Warden opens the PR
 pause_label        = "warden-pause"
-experiment_log     = "on"                # on: every task (an issue worked across ticks) is recorded in <state>/tasks.jsonl
+experiment_log     = "on"                # on: every task (an issue worked across ticks) is recorded in <state>/tasks.jsonl and published daily (publish-log)
+experiment_doc     = "docs/experiment-27b.md"  # where publish-log writes the log (never a protected path)
+experiment_tz      = ""                  # the IANA zone for the log's days and weeks (default: the machine's), e.g. Europe/Moscow
 experiment_acts    = ""                  # acts whose results are task records (default: work-issue, merge-pr, pickup-branch)
 
 # The kill switch, checked first every tick: any finding → this tick only
@@ -51,6 +53,10 @@ run  = { builtin = "github-prs" }
 [[observe]]
 name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow, reverts of Warden's PRs
 run  = { builtin = "github-main" }
+
+[[observe]]
+name = "experiment"                      # task records in the state, no open warden/experiment-* PR, not published today → publish-log
+run  = { builtin = "github-experiment" }
 
 [[act]]
 name   = "work-issue"                    # a branch warden/issue-N-slug from main, the brain edits files only, a (draft) PR "Closes #N"
@@ -81,3 +87,8 @@ floors = { max_per_day = 5 }
 name   = "pickup-branch"                 # a delegate's pushed branch becomes a PR under the merge rules
 run    = { builtin = "pickup-branch" }
 floors = { untrusted = "deny", max_per_day = 5 }
+
+[[act]]
+name   = "publish-log"                   # the experiment log rendered from the state (no model) into experiment_doc, a PR warden/experiment-DAY touching only it
+run    = { builtin = "publish-log" }
+floors = { untrusted = "deny", max_per_day = 2 }

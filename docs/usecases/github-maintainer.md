@@ -28,6 +28,7 @@ code and in `warden.toml`, not in a prompt. This page is how Warden maintains it
 | `release` | From green `main`, never paused, one a day: the next version from merged PR labels and titles (`feat`/`enhancement` → minor, else patch; breaking → an issue for the owner, never released). A release PR updates `CHANGELOG.md` from the PR titles and links (Keep a Changelog sections, no model). It merges under `merge-pr`'s rules; then Warden tags `vX.Y.Z` on its merge commit through the API, and the repository's release workflow builds it. A failed release workflow is a critical ping. | `untrusted = "deny"` |
 | `delegate` | Hands an issue to another agent of the owner's with `params.delegate_cmd`, an argv template (`{title}`, `{body}`, `{agent}`, `{issue}`, `{url}`, `{repo}`; no shell) — e.g. a team tracker CLI or a chat bridge the image already has. Used for issues labeled per `delegate_labels`, and for hard issues when no paid brain may take them (`delegate_default`). The work comes back as PRs from `trusted_authors`, or as a branch under `pickup_branches` that Warden opens a PR for. | `max_per_day` |
 | `pickup-branch` | A delegate's pushed branch becomes a PR, merged under the same rules as Warden's own. The PR is titled after the branch's commits (one commit: its subject and body; several: the oldest subject and a list of every subject), so the release reads the right bump. | `untrusted = "deny"` |
+| `publish-log` | Once a day: the experiment log rendered from the state (no model) into `experiment_doc`, on a branch `warden/experiment-YYYY-MM-DD`, in a ready PR labeled `warden`, `experiment` that touches only that file; `merge-pr` merges it on green CI. Nothing when the file on `main` is already current. See [The 27B experiment log](#the-27b-experiment-log). | `untrusted = "deny"`, `max_per_day = 2` |
 
 `checks_mode = "ci"` (the default) means Warden never runs repository code where it lives: no Go, node or sandbox
 needed in its image; CI decides. `checks_mode = "local"` runs `params.checks` in the sandbox in the worktree (no
@@ -90,7 +91,9 @@ acp = ["npx", "-y", "@agentclientprotocol/claude-agent-acp@<pinned>"]
 `auto` for `work-issue`: small issues (labels `small`, `good first issue`, `docs`, `chore`, `dependencies`, or a
 dependency-only title) go to the free brain, with the paid one as the one escalation when CI (or the local checks)
 stay red; other issues go to the paid brain, and with none available they are **hard**: delegated
-(`delegate_default`), never a paid model you didn't configure. An upstream that answers 403 ("Request not allowed",
+(`delegate_default`), never a paid model you didn't configure. Only `auto` sizes issues: with a named brain
+(`work-issue = "local"`) every actionable issue goes to it — features and large changes included, never delegated or
+labeled `needs-human` for its size; a paid brain is then just another brain you may name. An upstream that answers 403 ("Request not allowed",
 a blocked region) marks that brain unavailable for a few hours: one report line, no retries. Acts that need no brain —
 merging green PRs, release PRs (the CHANGELOG is generated without a model), the digest — run off-hours too.
 
@@ -125,7 +128,8 @@ wake    = { every = "10m" }
 digest  = "daily"
 rules   = [{ act = "release", target = "v*.0.0", then = "deny" },   # majors: never
            { act = "work-issue", then = "auto" }, { act = "review-pr", then = "auto" }, { act = "merge-pr", then = "auto" },
-           { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" }]
+           { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" },
+           { act = "publish-log", then = "auto" }]
 
 [params]
 repo               = "OWNER/REPO"
@@ -144,6 +148,47 @@ llm_model          = "qwen3.8-27b-local"
 
 Start with `mode = "dry-run"` for a day and read the reports.
 
+## The 27B experiment log
+
+Warden maintains its own repository with a local 27B model (`qwen3.8-27b-local` through LiteLLM, the brain `local`,
+working outside its `unavailable` hours) doing all of the work, features included:
+
+```toml
+brain_for = { work-issue = "local", review-pr = "local", triage = "local" }   # no "auto": nothing is sized away from it
+[params]
+experiment_log = "on"              # the pack's default
+experiment_tz  = "Europe/Moscow"   # days and weeks of the log
+```
+
+Every two or three days the owner and Claude read the published log and tune the prompts, tools, context and skills.
+
+- **Task records.** A task is one issue worked by `work-issue` across ticks. Each act on it — the first attempt
+  (phase `new`), the fix round (`fix`), the give-up (`giveup`), the merge (`merge`, by `merge-pr`), a revert
+  (`revert`) — appends one line to `<state>/tasks.jsonl` (append-only, `0600`): the issue and PR, the brain and its
+  model, ok/refused, a short summary, wall time, tokens in/out and calls (the difference of the brains' usage around
+  the act), and the act's own data: size (`small` / `size:S|M|L|XL` labels, else the diff: under 50 changed lines S,
+  200 M, 800 L, else XL), files, lines added/deleted, tool runs and tool errors (the coder's file tools are counted),
+  the longest run of identical tool calls, CI on the first push (green: merged without a fix round), the fix round,
+  and at the merge the comments and reviews people other than Warden left. `experiment_acts` names the acts recorded
+  (default `work-issue`, `merge-pr`, `pickup-branch`); an act deferred before any model call (CI running) is not an
+  attempt. A merged PR titled `Revert "…"` that undoes a `warden/issue-*` PR (GitHub's revert branch, the quoted
+  title, or its number in the title) is recorded once as the task's revert.
+- **Failure categories**, several per failure, from the act's summary, log and data: `tool-call` (an unknown tool,
+  arguments that are not JSON, tool errors on a failed attempt), `context-limit` (context length, too many tokens,
+  prompt too long), `wrong-edit` (CI red after the push — every fix round —, local checks red, no change, a protected
+  path), `loop` (`max_steps`, three or more identical tool calls in a row), `timeout`, `gave-up` (handed to the owner,
+  or the model says it can't), `other`.
+- **Idle time is not failure.** Each tick in which the `work-issue` brain may not work — off-hours, its upstream
+  unavailable, the budget spent — adds the minutes since the previous tick (at most one wake interval) as an `idle`
+  record. Brain acts wait meanwhile; nothing counts as an attempt.
+- **Publishing.** The `experiment` observer proposes `publish-log` once a day (in `experiment_tz`) when there are
+  records, no `warden/experiment-*` PR is open and today's log isn't out yet. The act renders `experiment_doc`
+  (default `docs/experiment-27b.md`, never a protected path): a weekly summary (tasks, merged, first-push green %,
+  average attempts and fix rounds, median wall time, tokens, reverts, top failure categories, idle hours), then each
+  day newest first with its tasks, its failures with one-line reasons, and its idle hours. Its PR touches only that
+  file, so `merge-pr` merges it on green CI; the log PRs never trigger a release. `experiment_log = "off"` stops the
+  records and the publishing.
+
 ## Credentials checklist (the owner creates every credential)
 
 1. **A fine-grained personal access token** scoped to this one repository: Contents read/write, Pull requests
@@ -153,7 +198,7 @@ Start with `mode = "dry-run"` for a day and read the reports.
    limit — the outer backstop behind Warden's own daily cap.
 3. **A branch protection rule or ruleset on `main`**: require a pull request, require the CI status checks, block
    force pushes and deletions. Warden's merges then go through the same gate as everyone's.
-4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `warden-log` (GitHub
+4. Labels: `warden`, `needs-human`, `warden-pause`, `delegated`, `warden-fixed`, `release`, `experiment`, `warden-log` (GitHub
    creates missing labels when Warden adds them).
 
 ## Deploy on Kubernetes

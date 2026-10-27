@@ -37,6 +37,8 @@ func observeGitHub(ctx context.Context, name string, env *Env) ([]domain.Finding
 		return observeIssues(ctx, c, env)
 	case "github-prs":
 		return observePRs(ctx, c, env)
+	case "github-experiment":
+		return observeExperiment(ctx, c, env)
 	}
 	return observeMain(ctx, c, env)
 }
@@ -408,7 +410,7 @@ func releaseState(ctx context.Context, c *github.Client, env *Env) (releaseInfo,
 			}
 			continue
 		}
-		if p.MergedAt.After(since) {
+		if p.MergedAt.After(since) && !strings.HasPrefix(p.Head.Ref, refExperiment) { // the daily experiment log is no reason to release
 			ri.Merged = append(ri.Merged, p)
 		}
 	}
