@@ -10,6 +10,7 @@ func TestGuard(t *testing.T) {
 		body    any
 	}{
 		{"GET", p, nil}, {"GET", p + "/pulls?state=open", nil}, {"GET", "/user", nil}, {"GET", p + "/rules/branches/main", nil},
+		{"GET", p + "/compare/main...claude/pickup-title", nil},
 		{"POST", p + "/issues/3/comments", nil}, {"POST", p + "/pulls", nil}, {"PATCH", p + "/pulls/4", nil},
 		{"PUT", p + "/pulls/4/merge", nil}, {"POST", p + "/pulls/4/reviews", nil}, {"POST", p + "/issues", nil},
 		{"POST", p + "/git/refs", map[string]string{"ref": "refs/tags/v0.2.0", "sha": "abc"}},
