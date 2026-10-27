@@ -15,7 +15,7 @@ func TestKernel(t *testing.T) {
 		".github/workflows/ci.yml", ".github/dependabot.yml", ".github/ISSUE_TEMPLATE/bug.md", ".goreleaser.yaml", ".goreleaser.yml",
 		"LICENSE", "NOTICE", "SECURITY.md", "warden.toml", "deploy/prod.warden.toml", "warden.lock",
 		"packs/github-repo/domain.toml", "packs/github-repo/rules/x.toml", "internal/policy/policy.go", "internal/policy/sub/x.go",
-		"internal/github/guard.go", "internal/github/guard_test.go", "internal/github/kernel.go", "internal/github/kernel_test.go",
+		"internal/github/github.go", "internal/github/guard.go", "internal/github/guard_test.go", "internal/github/kernel.go", "internal/github/kernel_test.go",
 		"internal/meter/meter.go", "internal/box/box.go", "internal/update/verify.go", "internal/update/verify_sig.go",
 		"internal/update/attest.go", "internal/update/x/cosign_bundle.go", "internal/update/signature.go", "scripts/sign-release.sh",
 		"scripts/attest.sh", "docs/secrets.md", "internal/x/credentials.go", "pkg/Tokens.go",
@@ -27,7 +27,7 @@ func TestKernel(t *testing.T) {
 		}
 	}
 	out := []string{
-		"hello.go", "internal/github/github.go", "internal/core/signals.go", "DESIGN.md", "docs/signing.md", "packs/go-project/domain.toml",
+		"hello.go", "internal/github/githubtest/fake.go", "internal/core/signals.go", "DESIGN.md", "docs/signing.md", "packs/go-project/domain.toml",
 		"internal/update/update.go", "internal/builtin/github_acts.go", "github/LICENSE.md", "deploy/x.yaml", "docs/SECURITY.md.bak",
 		"internal/policyx/p.go", "scripts/build-image.sh",
 	}

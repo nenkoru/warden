@@ -32,6 +32,7 @@ var Kernel = []string{
 	"warden.lock",                    // the pinned packs
 	"packs/github-repo/**",           // the maintainer's own pack: its policy floors and rules
 	"internal/policy/**",             // the policy engine: what may act alone
+	"internal/github/github.go",      // send(): every request passes the guard here
 	"internal/github/guard.go",       // the allowlist of GitHub writes and pushes
 	"internal/github/guard_test.go",  // …and what pins it
 	"internal/github/kernel.go",      // this list, its matcher, the merge's last check
