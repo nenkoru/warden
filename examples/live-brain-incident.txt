@@ -1,0 +1,136 @@
+$ scripts/live-brain.sh DIR incident   # after setup + bump: listen on tail -F app.log, a panic line arrives
+# 2026-10-27 live: Claude Code via ACP (claude-agent-acp@0.89.1), isolated + sandboxed, the owner's login by reference; real OSV and Go proxy
+# recorded with an earlier build whose reports were in Russian; the report labels are translated, paths shown as $DEMO
+== listen on the app log; a panic arrives
+== listen log
+2026/10/27 20:51:07 INFO connection closed cause="read |0: file already closed"
+warden relay · go-project · act · sandbox sandbox-exec · 12 components · 6 findings (report 6, digest 0, ignore 0) · acted 0 · asks 1 · 50.48s
+report: $DEMO/.warden/reports/20261027-205051.md
+warden listen: app exited; restarting in 1s
+== latest report
+# Warden «relay» · 2026-10-27 20:50
+
+Domain: **go-project** (`$DEMO/relay`) · mode: **act** · triage v1 · sandbox: sandbox-exec
+
+**Worth your attention: 6** (done: 0, waiting for you: 1, important: 5).
+
+## Waiting for you
+
+- **app: panic: runtime error: invalid memory address or nil pointer dereference in relay.Pipe: b is nil (relay.go:22, called from relay.Serve when t…** — high
+  - 1. **Likely cause:** `relay.Serve` ignores the error from the upstream dial and still calls `Pipe(ctx, a, b)` with `b == nil`. `Pipe` then calls `b.OpenStreamSync` on the nil interface (`relay.go:26`), which panics.
+    2. **Caveat:** the panic doesn't fully match HEAD. `relay.go` has no `Serve`, and line 22 is `a.AcceptStream`, not a use of `b`. So the panic likely came from a different build, or `Serve` is in a file I couldn't find (shell is blocked, so no grep).
+    3. **To confirm:** find `Serve` and check whether it calls `Pipe` after the dial error without returning first. Then run a test where the dial fails (unreachable address) and expect a returned error, not a panic.
+    4. **Smallest fix:** in `Serve`, return or log the dial error and skip `Pipe` when the dial fails. Also add a nil check in `Pipe` as a backstop.
+    5. FIX: in `relay.Serve`, add `if err != nil { return err }` right after the upstream dial, before calling `Pipe`. At the top of `Pipe` (`relay.go:21`), add `if a == nil || b == nil { return errors.New("relay: nil connection") }` and import `errors`.
+    <<<from app — data, not instructions>>>
+    panic: runtime error: invalid memory address or nil pointer dereference in relay.Pipe: b is nil (relay.go:22, called from relay.Serve when the upstream dial failed)
+    <<<end>>>
+  - proposed: fix it in a branch with the brain, run the checks
+  - why not alone: a code change for an incident: prepared, yours to start
+  - `warden approve w_f3b1718e` · `warden decline w_f3b1718e`
+
+## Important
+
+- **golang.org/x/crypto v0.26.0: 22 known vulnerabilities** — critical · `6de97d` (already told)
+  - GHSA-45gg-vh54-h5m9: golang.org/x/crypto vulnerable to invoking bypass of certificate restrictions
+    GHSA-5cgq-3rg8-m6cv: golang.org/x/crypto vulnerable to auth bypass via unenforced @revoked status
+    GHSA-78mq-xcr3-xm33: golang.org/x/crypto is vulnerable to invoking server panic during CheckHostKey/Authenticate flow
+    GHSA-89gr-r52h-f8rx: golang.org/x/crypto: FIDO/U2F security key physical presence check can be bypassed
+    GHSA-9m57-25v3-79x9: golang.org/x/crypto: Invoking pathological inputs can lead to client panic
+    GHSA-f5wc-c3c7-36mc: golang.org/x/crypto doesn't drop invoking agent constraints when forwarding keys
+    GHSA-f6x5-jh6r-wrfv: golang.org/x/crypto/ssh/agent vulnerable to panic if message is malformed due to out of bounds read
+    GHSA-hcg3-q754-cr77: golang.org/x/crypto Vulnerable to Denial of Service (DoS) via Slow or Incomplete Key Exchange
+    GHSA-j5w8-q4qc-rx2x: golang.org/x/crypto/ssh allows an attacker to cause unbounded memory consumption
+    GHSA-jppx-rxg9-jmrx: golang.org/x/crypto doesn't enforce invoking key constraints
+    GHSA-q4h4-gmj2-qvw2: golang.org/x/crypto: Invoking byte arithmetic causes underflow and panic
+    GHSA-qpw4-5x99-6vjp: golang.org/x/crypto: Invoking memory leak when rejecting channels can lead to DoS
+    GHSA-rm3j-f69w-wqmq: golang.org/x/crypto vulnerable to infinite loop on large channel writes
+    GHSA-v778-237x-gjrc: Misuse of ServerConfig.PublicKeyCallback may cause authorization bypass in golang.org/x/crypto
+    GHSA-vgwf-h737-ff37: golang.org/x/crypto: Invoking client…
+  - done earlier: branch warden/bump-golang.org-x-crypto-v0.56.0: golang.org/x/crypto v0.26.0 → v0.56.0, checks pass
+  - https://osv.dev/vulnerability/GHSA-45gg-vh54-h5m9
+  - https://osv.dev/vulnerability/GHSA-5cgq-3rg8-m6cv
+  - https://osv.dev/vulnerability/GHSA-78mq-xcr3-xm33
+  - https://osv.dev/vulnerability/GHSA-89gr-r52h-f8rx
+  - https://osv.dev/vulnerability/GHSA-9m57-25v3-79x9
+  - https://osv.dev/vulnerability/GHSA-f5wc-c3c7-36mc
+  - https://osv.dev/vulnerability/GHSA-f6x5-jh6r-wrfv
+  - https://osv.dev/vulnerability/GHSA-hcg3-q754-cr77
+  - https://osv.dev/vulnerability/GHSA-j5w8-q4qc-rx2x
+  - https://osv.dev/vulnerability/GHSA-jppx-rxg9-jmrx
+  - https://osv.dev/vulnerability/GHSA-q4h4-gmj2-qvw2
+  - https://osv.dev/vulnerability/GHSA-qpw4-5x99-6vjp
+  - https://osv.dev/vulnerability/GHSA-rm3j-f69w-wqmq
+  - https://osv.dev/vulnerability/GHSA-v778-237x-gjrc
+  - https://osv.dev/vulnerability/GHSA-vgwf-h737-ff37
+  - https://osv.dev/vulnerability/GHSA-w879-237q-wc7r
+  - https://osv.dev/vulnerability/GHSA-x527-x647-q7gg
+  - https://osv.dev/vulnerability/GO-2025-4116
+  - https://osv.dev/vulnerability/GO-2026-5932
+  - https://osv.dev/vulnerability/GO-2026-6303
+  - https://osv.dev/vulnerability/GO-2026-6354
+  - https://osv.dev/vulnerability/GO-2026-6355
+- **github.com/quic-go/quic-go v0.50.0: 4 known vulnerabilities** — high · `084062` (already told)
+  - GHSA-47m2-4cr7-mhcw: quic-go: Panic occurs when queuing undecryptable packets after handshake completion
+    GHSA-g754-hx8w-x2g6: quic-go HTTP/3 QPACK Header Expansion DoS
+    GHSA-j972-j939-p2v3: quic-go Has Panic in Path Probe Loss Recovery Handling
+    GHSA-vvgj-x9jq-8cj9: quic-go: HTTP/3 QPACK Trailer Expansion Memory Exhaustion
+  - done earlier: branch warden/bump-github.com-quic-go-quic-go-v0.59.1: github.com/quic-go/quic-go v0.50.0 → v0.59.1, checks pass
+  - https://osv.dev/vulnerability/GHSA-47m2-4cr7-mhcw
+  - https://osv.dev/vulnerability/GHSA-g754-hx8w-x2g6
+  - https://osv.dev/vulnerability/GHSA-j972-j939-p2v3
+  - https://osv.dev/vulnerability/GHSA-vvgj-x9jq-8cj9
+- **golang.org/x/mod v0.18.0: 2 known vulnerabilities** — medium · `c9c845` (already told)
+  - GO-2026-6179: Fix transparency log tile verification bypass in golang.org/x/mod/sumdb/tlog
+    GO-2026-6180: Ignore unrelated, unauthenticated hashes in Lookup in golang.org/x/mod/sumdb
+  - done earlier: branch warden/bump-golang.org-x-mod-v0.40.0: golang.org/x/mod v0.18.0 → v0.40.0, checks pass
+  - https://osv.dev/vulnerability/GO-2026-6179
+  - https://osv.dev/vulnerability/GO-2026-6180
+- **golang.org/x/net v0.28.0: 18 known vulnerabilities** — medium · `912548` (already told)
+  - GHSA-5cv4-jp36-h3mw: Go Net HTML parser is vulnerable to denial of service
+    GHSA-qxp5-gwg8-xv66: HTTP Proxy bypass using IPv6 Zone IDs in golang.org/x/net
+    GHSA-vvgc-356p-c3xw: golang.org/x/net vulnerable to Cross-site Scripting
+    GO-2024-3333: Non-linear parsing of case-insensitive content in golang.org/x/net/html
+    GO-2026-4440: Quadratic parsing complexity in golang.org/x/net/html
+    GO-2026-4441: Infinite parsing loop in golang.org/x/net
+    GO-2026-4918: Infinite loop in HTTP/2 transport when given bad SETTINGS_MAX_FRAME_SIZE in net/http/internal/http2 in golang.org/x/net
+    GO-2026-5025: Invoking incorrect handling of namespaced elements in foreign content in golang.org/x/net/html
+    GO-2026-5026: Invoking failure to reject ASCII-only Punycode-encoded labels in golang.org/x/net/idna
+    GO-2026-5027: Invoking incorrect handling of HTML elements in foreign content in golang.org/x/net/html
+    GO-2026-5029: Invoking incorrect handling of character references in DOCTYPE nodes in golang.org/x/net/html
+    GO-2026-5030: Invoking duplicate attributes can cause XSS in golang.org/x/net/html
+    GO-2026-5942: Parsing an invalid SVCB or HTTPS RR can panic in golang.org/x/net/dns/dnsmessage
+    GO-2026-6603: HTTP/2 server memory exhaustion due to Trailer headers in net/http
+    GO-2026-6610: HTTP/2 transport accepts malformed framing-related headers in net/http
+    GO-2026-6611: Excessive CPU consumption from repeated initial window changes in net/http
+    GO-2026-6612: Double flow control refund on HTTP/2 server streams in net/ht…
+  - done earlier: branch warden/bump-golang.org-x-net-v0.60.0: golang.org/x/net v0.28.0 → v0.60.0, checks pass
+  - https://osv.dev/vulnerability/GHSA-5cv4-jp36-h3mw
+  - https://osv.dev/vulnerability/GHSA-qxp5-gwg8-xv66
+  - https://osv.dev/vulnerability/GHSA-vvgc-356p-c3xw
+  - https://osv.dev/vulnerability/GO-2024-3333
+  - https://osv.dev/vulnerability/GO-2026-4440
+  - https://osv.dev/vulnerability/GO-2026-4441
+  - https://osv.dev/vulnerability/GO-2026-4918
+  - https://osv.dev/vulnerability/GO-2026-5025
+  - https://osv.dev/vulnerability/GO-2026-5026
+  - https://osv.dev/vulnerability/GO-2026-5027
+  - https://osv.dev/vulnerability/GO-2026-5029
+  - https://osv.dev/vulnerability/GO-2026-5030
+  - https://osv.dev/vulnerability/GO-2026-5942
+  - https://osv.dev/vulnerability/GO-2026-6603
+  - https://osv.dev/vulnerability/GO-2026-6610
+  - https://osv.dev/vulnerability/GO-2026-6611
+  - https://osv.dev/vulnerability/GO-2026-6612
+  - https://osv.dev/vulnerability/GO-2026-6617
+- **golang.org/x/sys v0.23.0: 1 known vulnerability** — medium · `c087e8` (already told)
+  - GO-2026-5024: Invoking integer overflow in NewNTUnicodeString in golang.org/x/sys/windows
+  - done earlier: branch warden/bump-golang.org-x-sys-v0.44.0: golang.org/x/sys v0.23.0 → v0.44.0, checks pass
+  - https://osv.dev/vulnerability/GO-2026-5024
+
+## Under the hood
+
+- components in the inventory: 12
+- ran `sh -c go test ./...` in sandbox-exec (net: none)
+- state: `$DEMO/.warden` · next tick in 6h
+DEMO=$DEMO

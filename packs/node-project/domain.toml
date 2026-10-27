@@ -1,0 +1,25 @@
+# A Node project in a git repository: advisories for every package in
+# package-lock.json (OSV), the tests as the health check; a fix lands in a new
+# local branch (worktree) with green tests — never pushed, never merged.
+name        = "node-project"
+description = "A Node repository: advisories for its npm packages, tests as health; fixes in a branch"
+params      = { root = ".", test = "npm test --silent", min_age_days = "14" }
+
+[[inventory]]
+name = "deps"
+run  = { builtin = "lockfiles", with = { root = "{root}" } }   # package-lock.json (and go.mod, requirements.txt if any)
+
+[feeds]
+osv      = true
+fix      = { npm = "npm-bump" }
+releases = []
+
+[[act]]
+name   = "npm-bump"                # npm install PKG@FIXED (direct) or an override (transitive), --ignore-scripts; checks; commit
+run    = { builtin = "npm-bump", with = { root = "{root}", min_age_days = "{min_age_days}" } }
+floors = { reversible = true, where = "worktree", sandbox = true, net = ["registry.npmjs.org"], max_per_day = 10 }
+
+[[check]]
+name   = "tests"
+run    = { cmd = ["sh", "-c", "{test}"] }
+floors = { sandbox = true }        # no network

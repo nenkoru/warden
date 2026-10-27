@@ -1,0 +1,99 @@
+# Example: Warden in its own namespace "warden", guarding the namespace "shop"
+# with the k8s-namespace pack. Read-only: the ServiceAccount gets the built-in
+# "view" ClusterRole in "shop" (no secrets, no writes); incidents become
+# proposals for the human, and `kubectl apply` needs the k8s.apply grant,
+# which is not given here.
+#
+# Replace IMAGE with an image built by scripts/build-image.sh (pin it by
+# digest), and "shop" with your namespace. The brain is optional; uncomment it
+# and create the Secret if you want RCA and judgement calls.
+# Remove: kubectl delete -f this file.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: warden
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: warden
+  namespace: warden
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: warden-view
+  namespace: shop
+subjects:
+  - { kind: ServiceAccount, name: warden, namespace: warden }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warden-config
+  namespace: warden
+  labels: { app: warden }
+data:
+  warden.toml: |
+    # sandbox = "none": the pod is the boundary (view-only ServiceAccount, no secrets,
+    # read-only root fs); bwrap needs user namespaces, which most pods don't get.
+    # The acts here only write proposal files.
+    # brain = { provider = "openai", base_url = "http://my-llm-gateway:4000", model = "my-model", api_key_env = "BRAIN_KEY" }
+    name    = "k8s-shop"
+    domain  = "pack:k8s-namespace"
+    params  = { namespace = "shop", context = "" }
+    state   = "/state/.warden"
+    mode    = "act"
+    wake    = { every = "15m", listen = true }
+    sandbox = "none"
+    grants  = []
+    rules   = []
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: warden-state
+  namespace: warden
+  labels: { app: warden }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: warden
+  namespace: warden
+  labels: { app: warden }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }        # one tick at a time on one state volume
+  selector: { matchLabels: { app: warden } }
+  template:
+    metadata:
+      labels: { app: warden }
+    spec:
+      serviceAccountName: warden
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: warden
+          image: IMAGE                # e.g. registry.example.com/warden@sha256:…
+          args: ["listen", "--config", "/config/warden.toml"]
+          env:
+            # - name: BRAIN_KEY
+            #   valueFrom: { secretKeyRef: { name: warden-brain, key: key, optional: true } }
+            - name: TMPDIR
+              value: /tmp
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: state, mountPath: /state }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: config, configMap: { name: warden-config } }
+        - { name: state, persistentVolumeClaim: { claimName: warden-state } }
+        - { name: tmp, emptyDir: {} }

@@ -1,0 +1,42 @@
+# A Linux server: disk, failed systemd units (system and the user's), GPUs,
+# and the services it exists for (here: an OpenAI-compatible model server) as
+# health checks. Read-only: nothing on the host is changed; a fix is a
+# proposal file (with the brain's RCA) for the human. Every step runs as the
+# warden's own user, without root.
+name        = "linux-host"
+description = "A Linux server: disk, failed units, GPUs, its model server; proposes fixes, changes nothing"
+# service_url: the service's health endpoint. quiet: when it may be down on purpose (HHMM-HHMM in tz,
+# plus weekends if quiet_weekends = "yes"): then a failure is a digest line, not an incident.
+params      = { min_free_pct = "10", gpu_max_c = "85", service_url = "http://127.0.0.1:8000/health", quiet = "0030-0800", quiet_weekends = "no", tz = "UTC" }
+
+[[observe]]
+name = "disk"                      # every real filesystem below min_free_pct free
+run  = { cmd = ["sh", "-c", "df -P -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs | awk -v min={min_free_pct} 'NR>1 { use=$5; sub(/%/,\"\",use); if (100-use < min) printf \"{\\\"key\\\":\\\"disk:%s\\\",\\\"kind\\\":\\\"low_disk\\\",\\\"severity\\\":\\\"high\\\",\\\"subject\\\":\\\"%s\\\",\\\"title\\\":\\\"%s: %d%% free (%d GB)\\\"}\\n\", $6, $6, $6, 100-use, $4/1048576 }'"] }
+
+[[observe]]
+name = "failed-units"              # systemd units in the failed state (system and the warden user's)
+run  = { cmd = ["sh", "-c", "for s in --system --user; do systemctl $s --failed --no-legend --plain 2>/dev/null | awk -v s=$s '{ printf \"{\\\"key\\\":\\\"unit%s:%s\\\",\\\"kind\\\":\\\"incident\\\",\\\"severity\\\":\\\"medium\\\",\\\"subject\\\":\\\"%s\\\",\\\"title\\\":\\\"failed unit %s (%s)\\\"}\\n\", s, $1, $1, $1, substr(s,3) }'; done"] }
+fix  = "propose"
+
+[[observe]]
+name = "gpu"                       # temperature and uncorrected ECC errors
+run  = { cmd = ["sh", "-c", "command -v nvidia-smi >/dev/null || exit 0; nvidia-smi --query-gpu=index,name,temperature.gpu,ecc.errors.uncorrected.volatile.total --format=csv,noheader,nounits | awk -F', ' -v max={gpu_max_c} '{ if ($3+0 > max) printf \"{\\\"key\\\":\\\"gpu-temp:%s\\\",\\\"kind\\\":\\\"health\\\",\\\"severity\\\":\\\"medium\\\",\\\"subject\\\":\\\"gpu%s\\\",\\\"title\\\":\\\"GPU %s (%s) at %s C\\\"}\\n\", $1, $1, $1, $2, $3; if ($4 ~ /^[0-9]+$/ && $4+0 > 0) printf \"{\\\"key\\\":\\\"gpu-ecc:%s\\\",\\\"kind\\\":\\\"health\\\",\\\"severity\\\":\\\"high\\\",\\\"subject\\\":\\\"gpu%s\\\",\\\"title\\\":\\\"GPU %s (%s): %s uncorrected ECC errors\\\"}\\n\", $1, $1, $1, $2, $4 }'"] }
+
+[[inventory]]
+name = "packages"                  # installed Debian/Ubuntu packages (for news that names them)
+run  = { cmd = ["sh", "-c", "command -v dpkg-query >/dev/null && dpkg-query -W -f '${Package} ${Version}\\n' || true"] }
+map  = { lines = '^(?P<pkg>\S+) (?P<ver>\S+)$', component = "{pkg}", version = "{ver}" }
+
+[feeds]
+osv = false                        # dpkg names aren't OSV ecosystem names; news matches the inventory by name
+rss = ["https://ubuntu.com/security/notices/rss.xml"]
+
+[[act]]
+name   = "propose"                 # a proposal file (and the brain's RCA) for the human; nothing on the host changes
+run    = { builtin = "propose" }
+floors = { reversible = true }
+
+[[observe]]
+name = "service"                   # the service this host exists for answers (only read: Warden never restarts it)
+run  = { cmd = ["sh", "-c", "curl -fsS -m 20 -o /dev/null {service_url} && exit 0; now=$(TZ={tz} date +%H%M); dow=$(TZ={tz} date +%u); q={quiet}; from=${q%-*}; to=${q#*-}; quiet=no; if [ \"$now\" -ge \"$from\" ] && [ \"$now\" -lt \"$to\" ]; then quiet=yes; fi; if [ {quiet_weekends} = yes ] && [ \"$dow\" -ge 6 ]; then quiet=yes; fi; if [ $quiet = yes ]; then echo '{\"key\":\"service-quiet\",\"kind\":\"health\",\"severity\":\"info\",\"subject\":\"service\",\"title\":\"{service_url} does not answer (quiet hours: expected)\"}'; else echo '{\"key\":\"service-down\",\"kind\":\"incident\",\"severity\":\"high\",\"subject\":\"service\",\"title\":\"{service_url} does not answer\"}'; fi"] }
+fix  = "propose"

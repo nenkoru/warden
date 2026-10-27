@@ -1,0 +1,39 @@
+# A Linux server, read-only: disk, failed systemd units, recent journal
+# errors, installed packages as inventory (for news). No act at all: every
+# fix is a proposal for the owner. Add acts (with floors and grants) only
+# when the owner wants the warden to change something.
+name        = "linux-server"
+description = "A Linux server, read-only: disk, failed units, journal errors, packages; proposes, never changes"
+params      = { min_free_gb = "10", since = "-6h" }
+
+[[observe]]
+name = "disk"
+run  = { builtin = "disk", with = { min_free_gb = "{min_free_gb}" } }
+
+[[observe]]
+name     = "failed-units"
+run      = { cmd = ["systemctl", "list-units", "--state=failed", "--plain", "--no-legend", "--no-pager"] }
+map      = { lines = '^(?P<unit>\S+)\s+\S+\s+\S+\s+\S+\s*(?P<desc>.*)$', key = "{unit}", title = "failed unit: {unit}", detail = "{desc}", subject = "{unit}" }
+kind     = "incident"
+severity = "high"
+fix      = "propose"
+
+[[observe]]
+name     = "journal-errors"            # grouped by line: a flood is one finding with a count
+run      = { cmd = ["journalctl", "-p", "err", "--since", "{since}", "--no-pager", "-o", "cat"] }
+map      = { lines = '^(?P<line>\S.{0,300})$', key = "{line}", title = "{line}" }
+kind     = "incident"
+severity = "low"                       # digest, not a ping; failed units carry the urgency
+
+[[inventory]]
+name = "packages"
+run  = { cmd = ["dpkg-query", "-W", "-f", "${Package} ${Version}\n"] }
+map  = { lines = '^(?P<name>\S+) (?P<version>\S+)$', component = "{name}", version = "{version}", ecosystem = "Debian" }
+
+[feeds]
+rss = ["https://www.cisa.gov/cybersecurity-advisories/all.xml"]
+
+[[act]]
+name   = "propose"                     # writes the finding (and the brain's analysis, if any) for the owner
+run    = { builtin = "propose" }
+floors = { reversible = true }

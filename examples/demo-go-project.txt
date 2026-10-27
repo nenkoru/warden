@@ -1,0 +1,74 @@
+$ scripts/demo-go-project.sh   # real OSV and Go proxy, no model; paths shown as $DEMO
+== tick 1
+warden greet · go-project · act · sandbox sandbox-exec · 1 components · 1 findings (report 1, digest 0, ignore 0) · acted 1 · asks 0 · 3.89s
+report: $DEMO/.warden/reports/20261027-192230.md
+== branches
+  warden/bump-golang.org-x-text-v0.41.0
+== checkout untouched:
+require golang.org/x/text v0.3.7
+== tick 2 (quiet)
+warden greet · go-project · act · sandbox sandbox-exec · 1 components · 1 findings (report 1, digest 0, ignore 0) · acted 0 · asks 0 · 1.996s
+quiet tick: nothing new worth telling (latest.md updated)
+== Report hook got:
+{"fresh":1,"name":"greet","report":"$DEMO/.warden/reports/20261027-192230.md","summary":"1 findings · done 1 · asks 0 · important 0 · new 1","title":"Warden «greet»: 1 new"}
+== report (tick 1)
+# Warden «greet» · 2026-10-27 19:22
+
+Domain: **go-project** (`$DEMO/greet`) · mode: **act** · triage v1 · sandbox: sandbox-exec
+
+**Worth your attention: 1** (done: 1, waiting for you: 0, important: 0).
+
+## Done
+
+- ✅ **golang.org/x/text v0.3.7: 3 known vulnerabilities** — branch warden/bump-golang.org-x-text-v0.41.0: golang.org/x/text v0.3.7 → v0.41.0, checks pass
+  - file: `$DEMO/.warden/prs/warden_bump-golang.org-x-text-v0.41.0.md`
+
+## Under the hood
+
+- components in the inventory: 1
+- ran `sh -c go test ./...` in sandbox-exec (net: none)
+- ran `go get golang.org/x/text@v0.41.0` in sandbox-exec (net: proxy.golang.org, sum.golang.org)
+- ran `go mod tidy` in sandbox-exec (net: proxy.golang.org, sum.golang.org)
+- ran `go test -count=1 -run=^$ ./...` in sandbox-exec (net: none)
+- ran `sh -c go test ./...` in sandbox-exec (net: none)
+- state: `$DEMO/.warden` · next tick in 6h
+== PR description
+# deps: bump golang.org/x/text v0.3.7 → v0.41.0
+
+Branch: `warden/bump-golang.org-x-text-v0.41.0` (commit 4b8bc6c, from b3e54a8). Not pushed.
+
+## Why
+
+GHSA-69ch-w2m2-3vjp: golang.org/x/text/language Denial of service via crafted Accept-Language header
+GO-2026-5970: Infinite loop on invalid input in golang.org/x/text
+GO-2026-6629: Panic parsing crafted input in x/text/secure/precis in golang.org/x/text
+
+https://osv.dev/vulnerability/GHSA-69ch-w2m2-3vjp
+https://osv.dev/vulnerability/GO-2026-5970
+https://osv.dev/vulnerability/GO-2026-6629
+
+## What changed
+
+```
+go.mod | 4 ++--
+ go.sum | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+```
+
+## Checks
+
+- worktree eab2998bf19a on new branch warden/bump-golang.org-x-text-v0.41.0 from b3e54a8
+- go get golang.org/x/text@v0.41.0: ok
+- go mod tidy: ok
+- checks: ok
+- verify: OSV lists no vulnerabilities for golang.org/x/text v0.41.0
+- commit 4b8bc6c on warden/bump-golang.org-x-text-v0.41.0
+
+## To merge
+
+```bash
+git merge --ff-only warden/bump-golang.org-x-text-v0.41.0
+```
+
+or push the branch and open a PR. To drop it: `git branch -D warden/bump-golang.org-x-text-v0.41.0`.
+DEMO=$DEMO

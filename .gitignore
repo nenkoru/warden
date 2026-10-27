@@ -1,0 +1,18 @@
+# binaries
+/warden
+/warden-*
+*.bin
+*.exe
+*.test
+*.out
+
+# build and release output
+/dist/
+
+# Warden state next to a warden.toml
+.warden/
+
+# editors and OS
+.DS_Store
+.idea/
+.vscode/

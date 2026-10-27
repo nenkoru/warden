@@ -1,0 +1,41 @@
+# A Mac: disk space, regenerable caches, battery and thermals, installed
+# Homebrew formulas as inventory (for news and advisories). Starts in
+# dry-run. Cleaning runs only a tool's own clean command, only for cleaners
+# the owner lists in params.clean, only with the "mac.clean" grant.
+name        = "macos"
+description = "A macOS machine: disk, caches, health, installed software; cleans only regenerable caches it was allowed to"
+params      = { min_free_gb = "25", clean = "" }   # clean: "go-build,npm,uv,pip,pnpm,yarn,simulators"
+
+[[observe]]
+name = "disk"
+run  = { builtin = "disk", with = { min_free_gb = "{min_free_gb}" } }
+
+[[observe]]
+name = "caches"                    # sizes of known caches; each with its tool's own clean command
+run  = { builtin = "caches" }
+fix  = "tool-clean"
+
+[[observe]]
+name = "library-caches"            # ~/Library/Caches by app: report only
+run  = { builtin = "library-caches" }
+
+[[observe]]
+name = "trash"                     # report only: the warden never empties the trash
+run  = { builtin = "trash" }
+
+[[observe]]
+name = "health"                    # battery condition, thermal throttling
+run  = { builtin = "health" }
+
+[[inventory]]
+name = "homebrew"
+run  = { builtin = "homebrew" }    # Cellar formulas and versions (read-only, no brew run)
+
+[feeds]
+osv = false                        # Homebrew isn't an OSV ecosystem; news matches the inventory by name
+rss = ["https://www.cisa.gov/cybersecurity-advisories/all.xml"]
+
+[[act]]
+name   = "tool-clean"              # `go clean -cache`, `npm cache clean --force` … — never rm
+run    = { builtin = "tool-clean", with = { allow = "{clean}" } }
+floors = { grant = "mac.clean", max_per_day = 6 }

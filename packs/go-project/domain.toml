@@ -1,0 +1,25 @@
+# A Go project in a git repository: dependency advisories (OSV), upstream
+# releases, the tests as the health check; fixes land in a new local branch
+# (worktree) with green tests — never pushed, never merged.
+name        = "go-project"
+description = "A Go repository: advisories for its dependencies, upstream releases, tests as health; fixes in a branch"
+params      = { root = ".", test = "go test ./...", min_age_days = "14" }
+
+[[inventory]]
+name = "deps"
+run  = { builtin = "lockfiles", with = { root = "{root}" } }   # go.mod, requirements.txt, package-lock.json
+
+[feeds]
+osv      = true                    # advisories for every dependency
+fix      = { Go = "go-bump" }      # a Go advisory is fixed by this act
+releases = []                      # GitHub owner/repo whose releases matter (the instance adds them)
+
+[[act]]
+name   = "go-bump"                 # go get MODULE@FIXED in a new worktree branch, go mod tidy, build, checks, commit
+run    = { builtin = "go-bump", with = { root = "{root}", min_age_days = "{min_age_days}" } }
+floors = { reversible = true, where = "worktree", sandbox = true, net = ["proxy.golang.org", "sum.golang.org"], max_per_day = 10 }
+
+[[check]]
+name   = "tests"                   # after a change (in its worktree) and every tick as health
+run    = { cmd = ["sh", "-c", "{test}"] }
+floors = { sandbox = true }        # no network

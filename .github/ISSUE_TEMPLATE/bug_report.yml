@@ -1,0 +1,54 @@
+name: Bug report
+description: Something Warden did (or did not do) that it should not have
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security issues go to Security → Report a vulnerability, not here.**
+        Please remove tokens, hostnames and anything private from configs and reports before pasting.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Steps, ideally with a minimal warden.toml and pack (or which shipped pack).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report or log excerpt
+      description: The relevant lines of `.warden/reports/latest.md`, `journal.jsonl` or the command output.
+      render: markdown
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `warden version` (or the commit).
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Platform
+      options: [macOS, Linux (Ubuntu/Debian), Linux (other), Container / Kubernetes]
+    validations:
+      required: true
+  - type: dropdown
+    id: sandbox
+    attributes:
+      label: Sandbox (the report header's `sandbox:`)
+      options: [sandbox-exec, bwrap, "NONE (owner's choice)", unavailable]
+  - type: input
+    id: brain
+    attributes:
+      label: Brain, if any
+      description: e.g. none, ACP + Claude Code, an OpenAI-compatible endpoint

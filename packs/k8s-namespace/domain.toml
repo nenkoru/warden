@@ -1,0 +1,53 @@
+# One Kubernetes namespace. Read-only by default: warnings and crash loops
+# become findings, container images become inventory (news, advisories), a
+# fix is a proposed manifest + diff for the human. Applying needs the
+# "k8s.apply" grant and is always asked.
+name        = "k8s-namespace"
+description = "A Kubernetes namespace: warnings, crash loops, images; proposes manifests, applies only with a grant"
+params      = { namespace = "default", context = "" }
+extensions  = ["mcp:io.github.containers/kubernetes-mcp-server@0.0.67"]   # the brain's read-only cluster tools
+
+[mcp.kubernetes]                   # from the MCP Registry (pinned in warden.lock); read-only
+registry = "mcp"
+name     = "io.github.containers/kubernetes-mcp-server"
+version  = "0.0.67"
+args     = ["--read-only"]
+net      = ["*"]                   # the API server's host is the kubeconfig's: narrow it in the instance
+
+[[observe]]
+name     = "warnings"
+run      = { cmd = ["kubectl", "--context={context}", "get", "events", "-n", "{namespace}", "-o", "json"] }
+map      = { items = "items[]", where = { type = "Warning" }, key = "{involvedObject.kind}/{involvedObject.name}/{reason}", title = "{reason}: {involvedObject.kind}/{involvedObject.name}", detail = "{message}", subject = "{involvedObject.kind}/{involvedObject.name}" }
+kind     = "incident"
+severity = "medium"
+fix      = "propose"
+
+[[observe]]
+name     = "crashloops"
+run      = { cmd = ["kubectl", "--context={context}", "get", "pods", "-n", "{namespace}", "-o", "json"] }
+map      = { items = "items[].status.containerStatuses[]", where = { "state.waiting.reason" = "CrashLoopBackOff" }, key = "{name}", title = "CrashLoopBackOff: container {name} ({restartCount} restarts)", detail = "{state.waiting.message}", subject = "{name}" }
+kind     = "incident"
+severity = "high"
+fix      = "propose"
+
+[[inventory]]
+name = "images"
+run  = { cmd = ["kubectl", "--context={context}", "get", "pods", "-n", "{namespace}", "-o", "json"] }
+map  = { items = "items[].spec.containers[]", component = "{image}", ecosystem = "OCI" }
+
+[feeds]
+rss = ["https://kubernetes.io/feed.xml"]
+
+[[act]]
+name   = "propose"                 # write the proposed fix (and the brain's RCA, if there is a brain) for the human
+run    = { builtin = "propose" }
+floors = { reversible = true }
+
+[[act]]
+name   = "apply"
+run    = { cmd = ["kubectl", "--context={context}", "apply", "-n", "{namespace}", "-f", "{file}"] }
+floors = { grant = "k8s.apply", always_ask = true }
+
+[[check]]
+name = "nodes-reachable"
+run  = { cmd = ["kubectl", "--context={context}", "get", "ns", "{namespace}", "-o", "name"] }

@@ -1,0 +1,33 @@
+name: New pack
+description: Propose a domain pack (a new kind of thing for Warden to guard)
+labels: [pack]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Pack name
+      placeholder: e.g. postgres, docker-host, terraform-workspace
+    validations:
+      required: true
+  - type: textarea
+    id: observe
+    attributes:
+      label: What it observes
+      description: Findings (what makes something worth telling?) and inventory (components news and advisories should match).
+    validations:
+      required: true
+  - type: textarea
+    id: acts
+    attributes:
+      label: What it may change, with which floors
+      description: Start read-only (`propose`). For each act that changes something, the command and its floors (grant, always_ask, sandbox + net, max_per_day) and the check that proves it worked.
+  - type: textarea
+    id: feeds
+    attributes:
+      label: Where news comes from
+      description: OSV ecosystem, GitHub releases, RSS feeds, MCP servers from the registry.
+  - type: textarea
+    id: test
+    attributes:
+      label: How to test it without the real system
+      description: A fixture (fake CLI with recorded output) like scripts/demo-k8s.sh, if possible.

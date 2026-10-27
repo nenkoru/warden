@@ -1,0 +1,74 @@
+$ scripts/demo-npm-pypi.sh   # real OSV, npm registry and PyPI; no model; paths shown as $DEMO
+== node: tick
+warden node · node-project · act · sandbox sandbox-exec · 1 components · 1 findings (report 1, digest 0, ignore 0) · acted 1 · asks 0 · 3.751s
+report: $DEMO/node.warden/reports/20261027-192253.md
+== node: branches
+  warden/bump-minimist-1.2.6
+commit 4db21b969515da7c89a8e0d9505868d4b9344113
+Author: Warden <warden@localhost>
+Date:   Tue Oct 27 19:22:57 2026 +0000
+
+    deps: bump minimist 1.2.5 → 1.2.6
+    
+    Fixes GHSA-xvch-5gv4-984h.
+    Opened by Warden; checks passed.
+
+ package-lock.json | 8 ++++----
+ package.json      | 8 ++++++--
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+== node: report
+# Warden «node» · 2026-10-27 19:22
+
+Domain: **node-project** (`$DEMO/node`) · mode: **act** · triage v1 · sandbox: sandbox-exec
+
+**Worth your attention: 1** (done: 1, waiting for you: 0, important: 0).
+
+## Done
+
+- ✅ **minimist 1.2.5: 1 known vulnerability** — branch warden/bump-minimist-1.2.6: minimist 1.2.5 → 1.2.6, checks pass
+  - file: `$DEMO/node.warden/prs/warden_bump-minimist-1.2.6.md`
+
+## Under the hood
+
+- components in the inventory: 1
+- ran `sh -c npm test --silent` in sandbox-exec (net: none)
+- ran `npm install --ignore-scripts --no-audit --no-fund --cache $DEMO/node.warden/work/tmp/npm-cache` in sandbox-exec (net: registry.npmjs.org)
+- ran `sh -c npm test --silent` in sandbox-exec (net: none)
+- state: `$DEMO/node.warden` · next tick in 6h
+== py: tick
+warden py · python-project · act · sandbox sandbox-exec · 2 components · 1 findings (report 1, digest 0, ignore 0) · acted 1 · asks 0 · 10.848s
+report: $DEMO/py.warden/reports/20261027-192257.md
+== py: branches
+  warden/bump-requests-2.33.0
+commit fc4859e530aaa73824a07bce72cf7235142fa9c0
+Author: Warden <warden@localhost>
+Date:   Tue Oct 27 19:23:08 2026 +0000
+
+    deps: bump requests 2.31.0 → 2.33.0
+    
+    Fixes GHSA-9hjg-9r4m-mvj7,GHSA-9wx4-h78v-vm56,GHSA-gc5v-m9x4-r6x2.
+    Opened by Warden; checks passed.
+
+ requirements.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== py: report
+# Warden «py» · 2026-10-27 19:22
+
+Domain: **python-project** (`$DEMO/py`) · mode: **act** · triage v1 · sandbox: sandbox-exec
+
+**Worth your attention: 1** (done: 1, waiting for you: 0, important: 0).
+
+## Done
+
+- ✅ **requests 2.31.0: 3 known vulnerabilities** — branch warden/bump-requests-2.33.0: requests 2.31.0 → 2.33.0, checks pass
+  - file: `$DEMO/py.warden/prs/warden_bump-requests-2.33.0.md`
+
+## Under the hood
+
+- components in the inventory: 2
+- ran `sh -c if [ -x .warden-venv/bin/python ]; then .warden-venv/bin/python -m pytest -q; else python3 -m pytest -q; fi` in sandbox-exec (net: none)
+- ran `python3 -m venv .warden-venv` in sandbox-exec (net: none)
+- ran `.warden-venv/bin/python -m pip install -q --no-cache-dir --disable-pip-version-check -r requirements.txt` in sandbox-exec (net: pypi.org, files.pythonhosted.org)
+- ran `sh -c if [ -x .warden-venv/bin/python ]; then .warden-venv/bin/python -m pytest -q; else python3 -m pytest -q; fi` in sandbox-exec (net: none)
+- state: `$DEMO/py.warden` · next tick in 6h
+DEMO=$DEMO

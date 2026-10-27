@@ -1,0 +1,102 @@
+$ scripts/live-brain.sh DIR setup bump
+# 2026-10-27 live: Claude Code via ACP (claude-agent-acp@0.89.1), isolated + sandboxed, the owner's login by reference; real OSV and Go proxy
+# recorded with an earlier build whose reports were in Russian; the report labels are translated, paths shown as $DEMO
+== setup: $DEMO/relay (quic-go v0.50.0), config $DEMO/warden.toml
+== tick: OSV → bump quic-go; the build breaks; the brain ports the code
+2026/10/27 20:45:33 INFO connection closed cause="peer connection closed"
+warden relay · go-project · act · sandbox sandbox-exec · 12 components · 5 findings (report 5, digest 0, ignore 0) · acted 5 · asks 0 · 1m21.677s
+report: $DEMO/.warden/reports/20261027-204420.md
+== branches
+  warden/bump-github.com-quic-go-quic-go-v0.59.1
+  warden/bump-golang.org-x-crypto-v0.56.0
+  warden/bump-golang.org-x-mod-v0.40.0
+  warden/bump-golang.org-x-net-v0.60.0
+  warden/bump-golang.org-x-sys-v0.44.0
+commit ad51e05739d807e3e91111e691e185eff380c1a3
+Author: Warden <warden@localhost>
+Date:   Tue Oct 27 17:45:34 2026 +0000
+
+    deps: bump github.com/quic-go/quic-go v0.50.0 → v0.59.1
+    
+    Fixes GHSA-47m2-4cr7-mhcw,GHSA-g754-hx8w-x2g6,GHSA-j972-j939-p2v3,GHSA-vvgj-x9jq-8cj9.
+    Opened by Warden; checks passed.
+
+ go.mod   | 16 ++++------------
+ go.sum   | 62 ++++++++++++--------------------------------------------------
+ relay.go |  4 ++--
+ 3 files changed, 18 insertions(+), 64 deletions(-)
+diff --git a/relay.go b/relay.go
+index 6c0c281..2582df2 100644
+--- a/relay.go
++++ b/relay.go
+@@ -15,10 +15,10 @@ func Config() *quic.Config {
+ }
+ 
+ // Peer names a connection for the logs.
+-func Peer(c quic.Connection) string { return c.RemoteAddr().String() }
++func Peer(c *quic.Conn) string { return c.RemoteAddr().String() }
+ 
+ // Pipe copies one stream of a to a new stream of b.
+-func Pipe(ctx context.Context, a, b quic.Connection) error {
++func Pipe(ctx context.Context, a, b *quic.Conn) error {
+ 	in, err := a.AcceptStream(ctx)
+ 	if err != nil {
+ 		return err
+== checkout untouched:
+require github.com/quic-go/quic-go v0.50.0
+
+== the brain's permission requests (agent.log)
+warden brain(acp): edit [$DEMO/.warden/work/73b75545a6b7/relay.go] → true
+warden brain(acp): edit [$DEMO/.warden/work/73b75545a6b7/relay.go] → true
+warden brain(acp): edit [$DEMO/.warden/work/8839541aaf61/version.go] → true
+warden brain(acp): edit [$DEMO/.warden/work/8839541aaf61/version_test.go] → true
+
+== PR description
+# deps: bump github.com/quic-go/quic-go v0.50.0 → v0.59.1
+
+Branch: `warden/bump-github.com-quic-go-quic-go-v0.59.1` (commit ad51e05, from 99099a6). Not pushed.
+
+## Why
+
+GHSA-47m2-4cr7-mhcw: quic-go: Panic occurs when queuing undecryptable packets after handshake completion
+GHSA-g754-hx8w-x2g6: quic-go HTTP/3 QPACK Header Expansion DoS
+GHSA-j972-j939-p2v3: quic-go Has Panic in Path Probe Loss Recovery Handling
+GHSA-vvgj-x9jq-8cj9: quic-go: HTTP/3 QPACK Trailer Expansion Memory Exhaustion 
+
+https://osv.dev/vulnerability/GHSA-47m2-4cr7-mhcw
+https://osv.dev/vulnerability/GHSA-g754-hx8w-x2g6
+https://osv.dev/vulnerability/GHSA-j972-j939-p2v3
+https://osv.dev/vulnerability/GHSA-vvgj-x9jq-8cj9
+
+## What changed
+
+```
+go.mod   | 16 ++++------------
+ go.sum   | 62 ++++++++++++--------------------------------------------------
+ relay.go |  4 ++--
+ 3 files changed, 18 insertions(+), 64 deletions(-)
+```
+
+## Checks
+
+- worktree 73b75545a6b7 on new branch warden/bump-github.com-quic-go-quic-go-v0.59.1 from 99099a6
+- go get github.com/quic-go/quic-go@v0.59.1: ok
+- go mod tidy: ok
+- build or checks red after the bump; asking the brain to fix it in the worktree
+- brain: Shell is unavailable, as noted. The error only points at relay.go, so I'll fix it there. In quic-go v0.53+, the `quic.Connection` interface was replaced by the concrete type `*quic.Conn`.I fixed the build error in `relay.go`, but nothing has been compiled or tested: shell commands were refused here, so I couldn't run the checks.
+**Cause:** quic-go v0.53.0 removed the `quic.Connection` interface. Connections are now the concrete type `*quic.Conn`.
+**Change:** in `relay.go`, I changed the parameter type from `quic.Connection` to `*quic.Conn` in two places:
+- `Peer(c *quic.Conn) string` (line 18)
+- `Pipe(ctx context.Context, a, b *quic.Conn) error` (line 21)
+The function bodies didn't need to change. `AcceptStream` and `OpenStreamSync` still exist and now return `*quic.Stream`, which `io.Copy` can use as before.
+- checks: ok
+- verify: OSV lists no vulnerabilities for github.com/quic-go/quic-go v0.59.1
+- commit ad51e05 on warden/bump-github.com-quic-go-quic-go-v0.59.1
+
+## To merge
+
+```bash
+git merge --ff-only warden/bump-github.com-quic-go-quic-go-v0.59.1
+```
+
+or push the branch and open a PR. To drop it: `git branch -D warden/bump-github.com-quic-go-quic-go-v0.59.1`.

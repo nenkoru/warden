@@ -1,0 +1,26 @@
+# A Python project in a git repository: advisories for the == pins in
+# requirements.txt (OSV), the tests as the health check; a fix lands in a new
+# local branch (worktree) with green tests — never pushed, never merged.
+name        = "python-project"
+description = "A Python repository: advisories for its pinned requirements, tests as health; fixes in a branch"
+# the tests run in the bump's own venv (.warden-venv) when there is one
+params      = { root = ".", test = "if [ -x .warden-venv/bin/python ]; then .warden-venv/bin/python -m pytest -q; else python3 -m pytest -q; fi", min_age_days = "14" }
+
+[[inventory]]
+name = "deps"
+run  = { builtin = "lockfiles", with = { root = "{root}" } }   # requirements.txt (== pins)
+
+[feeds]
+osv      = true
+fix      = { PyPI = "pip-bump" }
+releases = []
+
+[[act]]
+name   = "pip-bump"                # the == pin edited, a fresh venv with the set installed, checks, commit (the venv is not committed)
+run    = { builtin = "pip-bump", with = { root = "{root}", min_age_days = "{min_age_days}" } }
+floors = { reversible = true, where = "worktree", sandbox = true, net = ["pypi.org", "files.pythonhosted.org"], max_per_day = 10 }
+
+[[check]]
+name   = "tests"
+run    = { cmd = ["sh", "-c", "{test}"] }
+floors = { sandbox = true }        # no network

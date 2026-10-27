@@ -1,0 +1,21 @@
+name: Feature request
+description: An idea for Warden itself (for a new domain, use "New pack")
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What do you want Warden to notice, do or stop doing? What happens today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How it could work. Warden aims to stay small and standard — can it be a pack, a hook, an MCP server or a registry extension instead of core code?
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety
+      description: What could this let Warden change, and which floors (grant, always_ask, sandbox, max_per_day) should hold it?

@@ -1,0 +1,49 @@
+$ scripts/demo-macos.sh   # a real Mac, dry-run, no model; paths shown as $DEMO; app names under ~/Library/Caches replaced with <app>
+== tick (dry-run)
+warden mac · macos · dry-run · sandbox sandbox-exec · 367 components · 8 findings (report 1, digest 7, ignore 0) · acted 0 · asks 0 · 9.862s
+report: $DEMO/.warden/reports/20261027-192236.md
+== status
+warden mac · domain pack:macos · mode dry-run · sandbox auto · state $DEMO/.warden
+triage v1 (9 rules) built-in
+pending: none
+pings: none sent yet
+sources: no labels yet (`warden feedback ID noise|digest|important` on a signal or feed item)
+latest report: $DEMO/.warden/reports/latest.md
+== report
+# Warden «mac» · 2026-10-27 19:22
+
+Domain: **macos** (`min_free_gb=25`) · mode: **dry-run (changing nothing)** · triage v1 · sandbox: sandbox-exec
+
+**Worth your attention: 1** (done: 0, waiting for you: 0, important: 1).
+
+## Important
+
+- **Low disk space: 16.5 GB free** — medium · `d7b7f2`
+  - 16.5 GB free of 460.4 GB (96% used); threshold 25 GB. Regenerable caches the tools can clean: 14.4 GB. Biggest: Go build cache 8.2 GB, Go module cache 3.4 GB, npm cache 1.7 GB, uv cache (unused) 1.1 GB.
+
+## Digest (no ping)
+
+- **Hugging Face models: 14.3 GB** — low · `bc39e2`
+  - downloaded models: expensive to fetch again — yours to prune
+- **Go build cache: 8.2 GB** — low · `b2e5ca`
+  - rebuilt on the next build
+  - possible: run `go clean -cache` (frees up to 8.2 GB) — not doing it: floor: grant mac.clean missing
+- **Go module cache: 3.4 GB** — low · `833d0e`
+  - re-downloaded on the next build; offline builds break until then
+  - possible: run `go clean -modcache` (frees up to 3.4 GB) — not doing it: floor: grant mac.clean missing
+- **npm cache: 1.7 GB** — low · `447619`
+  - possible: run `npm cache clean --force` (frees up to 1.7 GB) — not doing it: floor: grant mac.clean missing
+- **uv cache (unused): 1.1 GB** — low · `22ded2`
+  - only entries nothing uses
+  - possible: run `uv cache prune` (frees up to 1.1 GB) — not doing it: floor: grant mac.clean missing
+- **~/Library/Caches: 26.9 GB** — info · `3d9994`
+  - apps own these; the biggest: go-build 8.2 GB, <app> 7.2 GB, <app> 1.9 GB, <app> 1.7 GB, <app> 1.4 GB, <app> 1.4 GB. Report only.
+- **Battery: Normal, 767 cycles** — info · `31a60c`
+
+## Under the hood
+
+- components in the inventory: 367
+- act tool-clean: report-only — needs the mac.clean grant (grants in warden.toml)
+- feed https://www.cisa.gov/cybersecurity-advisories/all.xml: first look, 30 items as the baseline
+- state: `$DEMO/.warden` · next tick in 6h
+DEMO=$DEMO
