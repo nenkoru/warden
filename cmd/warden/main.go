@@ -13,15 +13,18 @@
 //	warden improve [--candidate FILE] [--agent] | rollback
 //	warden add REF | verify          extensions from registries, pinned in warden.lock
 //	warden units [--listen]          launchd plist / systemd units (written, not loaded)
+//	warden github-note --event E     a hook command: the event JSON on stdin → a comment on the repo's "Warden log" issue
 //
 // Every command takes --config PATH (default ./warden.toml).
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,6 +34,7 @@ import (
 	"time"
 	_ "time/tzdata" // zones for [brain] tz and the packs, also in minimal images
 
+	"github.com/nenkoru/warden/internal/builtin"
 	"github.com/nenkoru/warden/internal/core"
 	"github.com/nenkoru/warden/internal/domain"
 	"github.com/nenkoru/warden/internal/mcpx"
@@ -56,6 +60,7 @@ func main() {
 	agent := fs.Bool("agent", false, "improve: ask the brain for the candidate")
 	from := fs.String("from", "owner", "signal: who says it")
 	noTick := fs.Bool("no-tick", false, "signal: only queue it")
+	event := fs.String("event", "", "github-note: the hook event (Report, Ask, Digest)")
 	listenUnits := fs.Bool("listen", false, "units: keep one process awake (warden listen) instead of a tick per interval")
 	var pos []string
 	for len(args) > 0 {
@@ -105,6 +110,8 @@ func main() {
 			}
 			return withInstance(*cfgPath, func(in *core.Instance) error { return tick(ctx, in) })
 		})
+	case "github-note":
+		err = withConfig(*cfgPath, func(cfg *core.Config) error { return githubNote(ctx, cfg, *event) })
 	case "status":
 		err = withConfig(*cfgPath, func(cfg *core.Config) error { fmt.Print(core.StatusText(cfg)); return nil })
 	case "report":
@@ -175,7 +182,7 @@ func main() {
 var ownerLooked = map[string]bool{"status": true, "report": true, "approve": true, "decline": true, "feedback": true, "improve": true, "rollback": true, "signal": true}
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: warden init|tick|listen|serve|mcp|signal|status|approve|decline|feedback|improve|rollback|add|verify|units|report|packs|version [--config warden.toml]")
+	fmt.Fprintln(os.Stderr, "usage: warden init|tick|listen|serve|mcp|signal|status|approve|decline|feedback|improve|rollback|add|verify|units|report|packs|github-note|version [--config warden.toml]")
 	os.Exit(2)
 }
 
@@ -383,6 +390,28 @@ func packs() error {
 	}
 	fmt.Println(strings.Join(lines, "\n"))
 	return nil
+}
+
+// githubNote: the github-repo pack's notifier as a hook command. It reads
+// the config and the pack's params only (no state lock: it runs inside a
+// tick's hook), and the event JSON from stdin.
+func githubNote(ctx context.Context, cfg *core.Config, event string) error {
+	if event == "" {
+		return errors.New("usage: warden github-note --config warden.toml --event Report|Ask|Digest < payload.json")
+	}
+	d, err := domain.Load(cfg.DomainDir(), cfg.Params)
+	if err != nil {
+		return err
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(io.LimitReader(os.Stdin, 4<<20)).Decode(&payload); err != nil {
+		return fmt.Errorf("github-note: the event JSON on stdin: %w", err)
+	}
+	out, err := builtin.GitHubNote(ctx, d.Params, event, payload, builtin.DefaultWeb())
+	if out != "" {
+		fmt.Println(out)
+	}
+	return err
 }
 
 func initCmd(path, pack, dir, name string) error {

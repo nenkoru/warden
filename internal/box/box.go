@@ -25,6 +25,12 @@ type Policy struct {
 	// agent that logs in by reference (Claude Code's keychain item) instead
 	// of a token in its environment. Nothing else under ~/Library opens.
 	Keychain bool
+	// Loopback: ports on 127.0.0.1 the command may connect to directly (a
+	// local metering proxy, a local model server). With bwrap the network
+	// namespace is shared for them.
+	Loopback []int
+	// Deny: files or folders unreadable inside the box (a token file).
+	Deny []string
 }
 
 type Result struct {
@@ -292,8 +298,14 @@ func profile(p Policy, tmp string, proxyPort int) string {
 		b.WriteString(keychainRules())
 	}
 	fmt.Fprintf(&b, "(allow file-read* file-write*%s)\n", subpaths(paths(append([]string{tmp}, p.ReadWrite...))))
+	if len(p.Deny) > 0 {
+		fmt.Fprintf(&b, "(deny file-read* file-write*%s)\n", subpaths(paths(p.Deny)))
+	}
 	if proxyPort > 0 {
 		fmt.Fprintf(&b, "(allow network-outbound (remote ip \"localhost:%d\"))\n", proxyPort)
+	}
+	for _, port := range p.Loopback {
+		fmt.Fprintf(&b, "(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
 	}
 	return b.String()
 }
@@ -320,7 +332,7 @@ func keychainRules() string {
 func bwrapArgs(p Policy, tmp, dir string) []string {
 	a := []string{"--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc",
 		"--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"}
-	if len(p.Net) == 0 {
+	if len(p.Net) == 0 && len(p.Loopback) == 0 {
 		a = append(a, "--unshare-net")
 	}
 	for _, s := range paths(secretDirs) {
@@ -333,6 +345,13 @@ func bwrapArgs(p Policy, tmp, dir string) []string {
 	}
 	for _, s := range paths(append([]string{tmp}, p.ReadWrite...)) {
 		a = append(a, "--bind-try", s, s)
+	}
+	for _, s := range paths(p.Deny) { // after the binds: the deny wins
+		if fi, err := os.Stat(s); err == nil && fi.IsDir() {
+			a = append(a, "--tmpfs", s)
+		} else if err == nil {
+			a = append(a, "--ro-bind", "/dev/null", s)
+		}
 	}
 	if dir != "" {
 		a = append(a, "--chdir", realPath(dir))

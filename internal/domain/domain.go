@@ -24,14 +24,18 @@ type Domain struct {
 	Name        string            `toml:"name"`
 	Description string            `toml:"description"`
 	Params      map[string]string `toml:"params"` // defaults; the instance overrides
-	Observe     []Step            `toml:"observe"`
-	Inventory   []Step            `toml:"inventory"`
-	Act         []Step            `toml:"act"`
-	Check       []Step            `toml:"check"`
-	Feeds       Feeds             `toml:"feeds"`
-	MCP         map[string]MCPRef `toml:"mcp"`
-	Extensions  []string          `toml:"extensions"` // registry references ("skill:…", "mcp:…") the pack needs
-	Dir         string            `toml:"-"`
+	// Pause: the owner's kill switch, checked first every tick. Any finding
+	// from a pause step (or an error running one) pauses that tick: it only
+	// observes and reports; every act is refused.
+	Pause      []Step            `toml:"pause"`
+	Observe    []Step            `toml:"observe"`
+	Inventory  []Step            `toml:"inventory"`
+	Act        []Step            `toml:"act"`
+	Check      []Step            `toml:"check"`
+	Feeds      Feeds             `toml:"feeds"`
+	MCP        map[string]MCPRef `toml:"mcp"`
+	Extensions []string          `toml:"extensions"` // registry references ("skill:…", "mcp:…") the pack needs
+	Dir        string            `toml:"-"`
 }
 
 // Step: one observer, inventory source, action or check.
@@ -142,7 +146,7 @@ func (d *Domain) validate() error {
 	for _, s := range d.Act {
 		acts[s.Name] = true
 	}
-	for _, group := range [][]Step{d.Observe, d.Inventory, d.Act, d.Check} {
+	for _, group := range [][]Step{d.Pause, d.Observe, d.Inventory, d.Act, d.Check} {
 		for _, s := range group {
 			n := 0
 			if len(s.Run.Cmd) > 0 {

@@ -1,0 +1,161 @@
+# Warden maintaining one GitHub repository (the github-repo pack), in its own
+# namespace. Generic: replace every <PLACEHOLDER>. See
+# docs/usecases/github-maintainer.md for the instance and the credentials.
+#
+# - The ServiceAccount has NO RBAC: Warden needs no access to the cluster.
+# - checks_mode = "ci": no repository code runs in this pod (the image needs
+#   warden, the packs and git; no Go, node or bwrap). sandbox = "none": the pod
+#   is the boundary (non-root, read-only root fs, no capabilities, no SA token).
+# - The GitHub token and the LLM key are files from Secrets (0400), created by
+#   the owner (kubectl create secret … --from-file=token=/dev/stdin).
+# - Egress: DNS, GitHub on 443, the LiteLLM service, the delegate endpoint.
+#   NetworkPolicy matches IPs and ports, not host names: GitHub's ranges are
+#   published at https://api.github.com/meta; for an L7 allowlist by name
+#   (api.github.com, github.com) use an egress gateway.
+# Remove: kubectl delete -f this file.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: warden-maint
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: warden
+  namespace: warden-maint
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warden-config
+  namespace: warden-maint
+  labels: { app: warden-maint }
+data:
+  warden.toml: |
+    name    = "<REPO>-maintainer"
+    domain  = "pack:github-repo"
+    mode    = "dry-run"                  # read a day of reports, then "act"
+    sandbox = "none"
+    state   = "/state/.warden"
+    wake    = { every = "10m", listen = true }
+    digest  = "daily"
+    brain_for  = { triage = "local", interpret = "local", review-pr = "local", release = "local", work-issue = "auto" }
+    rules   = [{ act = "release", target = "v*.0.0", then = "deny" },
+               { act = "work-issue", then = "auto" }, { act = "review-pr", then = "auto" }, { act = "merge-pr", then = "auto" },
+               { act = "release", then = "auto" }, { act = "delegate", then = "auto" }, { act = "pickup-branch", then = "auto" }]
+
+    [params]
+    repo               = "<OWNER>/<REPO>"
+    owner              = "<OWNER>"
+    token_file         = "/secrets/github/token"
+    root               = "/state/repo"
+    checks_mode        = "ci"
+    max_issues_per_day = "3"
+    trusted_authors    = []              # e.g. ["<OTHER-AGENT-LOGIN>"]
+    delegate_cmd       = []              # e.g. ["<CLI>", "task", "create", "--title", "{title}", "--body", "{body}", "--to", "{agent}"]
+    delegate_labels    = {}              # e.g. { infra = "<AGENT>" }
+    delegate_default   = ""
+    llm_url            = "http://<LITELLM-SERVICE>.<NAMESPACE>.svc:4000/v1"
+    llm_model          = "<LOCAL-MODEL-NAME>"
+
+    [brains.local]
+    provider     = "openai"
+    base_url     = "{llm_url}"
+    model        = "{llm_model}"
+    api_key_file = "/secrets/llm/key"
+    free         = true
+    unavailable  = []                    # e.g. ["00:30-08:00", "sat", "sun"]
+    tz           = "UTC"
+
+    [budget]
+    per_day_usd       = 1000
+    alert_every_usd   = 100
+    burn_per_hour_usd = 100
+    free_models       = ["<LOCAL-MODEL-NAME>"]
+
+    [[hooks]]
+    event   = "Report"
+    command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Report"]
+    [[hooks]]
+    event   = "Ask"
+    command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Ask"]
+    [[hooks]]
+    event   = "Digest"
+    command = ["warden", "github-note", "--config", "/config/warden.toml", "--event", "Digest"]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: warden-state
+  namespace: warden-maint
+  labels: { app: warden-maint }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: warden
+  namespace: warden-maint
+  labels: { app: warden-maint }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }          # one tick at a time on one state volume
+  selector: { matchLabels: { app: warden-maint } }
+  template:
+    metadata:
+      labels: { app: warden-maint }
+    spec:
+      serviceAccountName: warden
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: warden
+          image: <IMAGE>                 # pinned by digest: registry.example.com/warden@sha256:…
+          args: ["listen", "--config", "/config/warden.toml"]
+          env:
+            - { name: TMPDIR, value: /tmp }
+            - { name: HOME, value: /state }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: state, mountPath: /state }
+            - { name: tmp, mountPath: /tmp }
+            - { name: github-token, mountPath: /secrets/github, readOnly: true }
+            - { name: llm-key, mountPath: /secrets/llm, readOnly: true }
+      volumes:
+        - { name: config, configMap: { name: warden-config } }
+        - { name: state, persistentVolumeClaim: { claimName: warden-state } }
+        - { name: tmp, emptyDir: {} }
+        - { name: github-token, secret: { secretName: github-token, defaultMode: 0400 } }
+        - { name: llm-key, secret: { secretName: llm-key, defaultMode: 0400 } }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: warden-egress
+  namespace: warden-maint
+spec:
+  podSelector: { matchLabels: { app: warden-maint } }
+  policyTypes: [Ingress, Egress]
+  ingress: []                            # nothing talks to Warden
+  egress:
+    - to:                                # DNS
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to:                                # GitHub (api.github.com, github.com): its published ranges on 443
+        - ipBlock: { cidr: <GITHUB-CIDR> }   # one block per range from https://api.github.com/meta ("api", "git", "web")
+      ports: [{ protocol: TCP, port: 443 }]
+    - to:                                # the LiteLLM proxy
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: <LITELLM-NAMESPACE> } }
+          podSelector: { matchLabels: { <LITELLM-LABEL>: <VALUE> } }
+      ports: [{ protocol: TCP, port: 4000 }]
+    - to:                                # the delegate endpoint (whatever delegate_cmd talks to)
+        - ipBlock: { cidr: <DELEGATE-CIDR> }
+      ports: [{ protocol: TCP, port: 443 }]

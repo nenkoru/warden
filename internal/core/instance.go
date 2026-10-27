@@ -20,6 +20,7 @@ import (
 	"github.com/nenkoru/warden/internal/domain"
 	"github.com/nenkoru/warden/internal/hooks"
 	"github.com/nenkoru/warden/internal/mcpx"
+	"github.com/nenkoru/warden/internal/meter"
 	"github.com/nenkoru/warden/internal/policy"
 	"github.com/nenkoru/warden/internal/registry"
 	"github.com/nenkoru/warden/internal/skills"
@@ -50,6 +51,15 @@ type Instance struct {
 	FirstRun bool              // the domain's first run (dry-run because mode is unset)
 	Refused  map[string]string // MCP servers refused, and why
 	readOnly map[string]bool   // MCP servers started read-only (their tools may go to the brain)
+
+	// Brains (brains.go): the named brains, the default one, the budget.
+	Ledger       *meter.Ledger
+	slots        map[string]*brainSlot
+	defaultBrain string
+	usage        map[string]*BrainUse
+	proxyAddr    string
+	proxyPort    int
+	paused       string // this tick is paused by the owner (pause steps), and why
 
 	mu       sync.Mutex
 	notes    []string
@@ -204,7 +214,7 @@ func pluginHooks(path, from string) ([]hooks.Hook, error) {
 	}
 	var out []hooks.Hook
 	for ev, groups := range hj.Hooks {
-		if !slices.Contains([]string{"Wake", "Finding", "PreAction", "PostAction", "Ask", "Report", "Signal"}, ev) {
+		if !slices.Contains([]string{"Wake", "Finding", "PreAction", "PostAction", "Ask", "Report", "Signal", "Digest"}, ev) {
 			continue
 		}
 		for _, g := range groups {
@@ -273,31 +283,7 @@ func (in *Instance) servers(lock registry.Lock) []mcpx.Server {
 	return out
 }
 
-func (in *Instance) openBrain() error {
-	b := in.Cfg.Brain
-	switch b.Provider {
-	case "anthropic", "openai":
-		ec := brain.EndpointConfig{Provider: b.Provider, BaseURL: b.BaseURL, Model: b.Model, APIKeyEnv: b.APIKeyEnv, Auth: b.Auth}
-		if err := ec.Normalize(); err != nil {
-			return err
-		}
-		in.Brain = brain.Endpoint(ec)
-	case "acp":
-		if in.Runner == "" {
-			in.note(noSandboxLine("the ACP brain (" + b.ACP[0] + ")"))
-			return nil
-		}
-		in.Brain = in.acpBrain()
-	}
-	if in.Brain != nil && b.Quiet != "" {
-		q, err := newQuietBrain(in.Brain, b.Quiet, b.TZ, func() time.Time { return in.Now() })
-		if err != nil {
-			return err
-		}
-		in.Brain = q
-	}
-	return nil
-}
+func (in *Instance) openBrain() error { return in.openBrains() }
 
 func (in *Instance) tmp() string {
 	p := filepath.Join(in.Cfg.State, "work", "tmp")
@@ -315,7 +301,10 @@ func (in *Instance) contained(ctx context.Context, dir string, argv []string, f 
 		if in.Runner == "" {
 			return "", errNoSandbox
 		}
-		runner, p.Net = in.Runner, f.Net
+		runner, p.Net, p.Deny = in.Runner, f.Net, in.secretFiles()
+		if f.CleanEnv {
+			env = cleanEnv()
+		}
 		if usesGo(argv) {
 			p.ReadWrite = append(p.ReadWrite, goDirs()...)
 			env = append(env, "GOTOOLCHAIN=local", "GOFLAGS=-buildvcs=false", "GOTELEMETRY=off")
@@ -336,6 +325,45 @@ func (in *Instance) contained(ctx context.Context, dir string, argv []string, f 
 		}
 	}
 	return res.Output, err
+}
+
+// secretFiles: credential files the instance knows of (params *_file such as
+// the GitHub token, brains' api_key_file), unreadable inside the sandbox.
+func (in *Instance) secretFiles() []string {
+	var out []string
+	for k, v := range in.Dom.Params {
+		if strings.HasSuffix(k, "_file") && v != "" && filepath.IsAbs(v) {
+			out = append(out, v)
+		}
+	}
+	for _, b := range append([]BrainConfig{in.Cfg.Brain}, mapValues(in.Cfg.Brains)...) {
+		if b.APIKeyFile != "" {
+			out = append(out, b.APIKeyFile)
+		}
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+func mapValues[V any](m map[string]V) []V {
+	out := make([]V, 0, len(m))
+	for _, k := range sortedKeys(m) {
+		out = append(out, m[k])
+	}
+	return out
+}
+
+// cleanEnv: what a sandboxed command with clean_env sees — no secrets.
+func cleanEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		switch {
+		case slices.Contains([]string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "TMPDIR", "GOPATH", "GOCACHE", "GOMODCACHE", "GOROOT"}, k), strings.HasPrefix(k, "LC_"):
+			env = append(env, kv)
+		}
+	}
+	return env
 }
 
 func usesGo(argv []string) bool {
@@ -378,7 +406,7 @@ func (in *Instance) env(with map[string]any) *builtin.Env {
 			params[k] = s
 		}
 	}
-	return &builtin.Env{Params: params, State: in.Cfg.State, Web: in.Web, Run: in.Run, Checks: in.checks, Brain: in.Brain,
+	return &builtin.Env{Params: params, State: in.Cfg.State, Web: in.Web, Run: in.Run, Checks: in.checks, Brain: in.Brain, Brains: in.envBrains(),
 		Tools: in.brainTools(context.Background()), Skills: skills.Index(in.Skills), Now: in.Now, Log: func(string) {}}
 }
 

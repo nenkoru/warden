@@ -1,0 +1,81 @@
+# One GitHub repository, maintained: issues worked in branches and opened as
+# PRs, outside PRs reviewed (never merged), Warden's own PRs, Dependabot's and
+# trusted delegates' merged on green CI, patch/minor releases cut from merged
+# PR titles. Hard limits in code: the kill switch (a `warden-pause` label or a
+# PAUSE file on main) is read first every tick; issue and PR text is untrusted
+# data and never drives a merge or a release; protected paths always go to the
+# owner (needs-human); external code never runs here; a daily model budget.
+# The token comes from a file (a fine-grained PAT for this one repository,
+# without the workflows or administration permissions).
+name        = "github-repo"
+description = "A GitHub repository: works issues into PRs, reviews outside PRs, merges its own on green CI, cuts patch/minor releases"
+
+[params]
+repo        = ""                         # owner/name
+token_file  = ""                         # the fine-grained PAT, one line, chmod 600 (never in argv, env dumps or logs)
+owner       = ""                         # the GitHub login Warden pings
+root        = "repo"                     # a local clone (made on first use) — worktrees come from it
+api         = "https://api.github.com"
+branch      = "main"
+checks_mode = "ci"                       # ci: no repository code runs here, CI decides; local: run `checks` in the sandbox
+checks      = '["go vet ./...", "go test -race -count=1 ./...", "GOLANGCI_LINT_CACHE=$TMPDIR/golangci golangci-lint run ./..."]'
+required_checks    = ""                  # check names that must be present and green (default: every reported check green)
+protected          = '[".github/**", ".goreleaser.yaml", ".goreleaser.yml", "SECURITY.md", "LICENSE", "NOTICE", "packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"]'
+protected_names    = "secret,token,credential,signing,signature,cosign,gpg" # any file whose name contains one of these
+max_issues_per_day = "3"
+trusted_authors    = ""                  # logins whose PRs merge under Warden's own rules (the owner's other agents)
+release            = "auto"              # auto | off
+small_labels       = ""                  # default: small, good first issue, docs, chore, dependencies
+delegate_cmd       = ""                  # an argv template (JSON array) handing an issue to another agent: {title} {body} {agent} {issue} {url} {repo}
+delegate_labels    = ""                  # label → agent, e.g. { infra = "Ops" }
+delegate_default   = ""                  # the agent for hard issues when no paid brain may take them
+pickup_branches    = ""                  # branch prefixes a delegate pushes to; Warden opens the PR
+pause_label        = "warden-pause"
+
+# The kill switch, checked first every tick: any finding → this tick only
+# observes and reports; every act is refused.
+[[pause]]
+name = "kill-switch"
+run  = { builtin = "github-pause" }
+
+[[observe]]
+name = "issues"                          # open issues → kind "issue"; actionable ones get work-issue (one at a time) or delegate
+run  = { builtin = "github-issues" }
+
+[[observe]]
+name = "prs"                             # open PRs → merge-pr (own, Dependabot, trusted; green), review-pr (outside; once per head), a fix round on red drafts
+run  = { builtin = "github-prs" }
+
+[[observe]]
+name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow
+run  = { builtin = "github-main" }
+
+[[act]]
+name   = "work-issue"                    # a branch warden/issue-N-slug from main, the brain edits files only, a (draft) PR "Closes #N"
+run    = { builtin = "work-issue" }
+floors = { reversible = true, where = "worktree", needs_brain = true, clean_env = true, max_per_day = 10 }
+
+[[act]]
+name   = "review-pr"                     # one COMMENT review per head SHA from the diff and CI; never approves, never merges, never runs the code
+run    = { builtin = "review-pr" }
+floors = { reversible = true, needs_brain = true, max_per_day = 20 }
+
+[[act]]
+name   = "merge-pr"                      # squash-merge: own/Dependabot/trusted only, every check green, mergeable, no needs-human, no protected path
+run    = { builtin = "merge-pr" }
+floors = { untrusted = "deny", max_per_day = 30 }
+
+[[act]]
+name   = "release"                       # a release PR with CHANGELOG.md from merged PR titles (no model), then the tag on its merge commit
+run    = { builtin = "release" }
+floors = { untrusted = "deny", max_per_day = 4 }
+
+[[act]]
+name   = "delegate"                      # hand an issue to another agent with params.delegate_cmd; the work comes back as a PR
+run    = { builtin = "delegate" }
+floors = { max_per_day = 5 }
+
+[[act]]
+name   = "pickup-branch"                 # a delegate's pushed branch becomes a PR under the merge rules
+run    = { builtin = "pickup-branch" }
+floors = { untrusted = "deny", max_per_day = 5 }

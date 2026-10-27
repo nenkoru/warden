@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nenkoru/warden/internal/meter"
 )
 
 var echo = Tool{
@@ -239,5 +241,55 @@ func TestNormalize(t *testing.T) {
 	}
 	if _, err := Endpoint(EndpointConfig{}).Do(context.Background(), "", "q", nil); err == nil {
 		t.Error("Do with a bad config: want an error")
+	}
+}
+
+func TestEndpointMeter(t *testing.T) {
+	prices := meter.Prices{"m": {Input: 1, Output: 10, CacheRead: 0.1, CacheWrite: 2}}
+	l, err := meter.Open(meter.Config{PerDayUSD: 1000, AlertEveryUSD: 0.005, Prices: prices, StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, _ := serve(t,
+		func(http.Header, map[string]any) (int, string) {
+			return 200, `{"content":` + turn1 + `,"stop_reason":"tool_use","model":"m",
+				"usage":{"input_tokens":1000,"output_tokens":100,"cache_read_input_tokens":10000,"cache_creation_input_tokens":500}}`
+		},
+		func(http.Header, map[string]any) (int, string) {
+			return 200, `{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":2000,"output_tokens":300}}`
+		},
+	)
+	var log strings.Builder
+	out, err := Endpoint(EndpointConfig{Provider: "anthropic", BaseURL: srv.URL, Model: "m", MaxTokens: 100, Meter: l, Log: &log}).
+		Do(context.Background(), "", "q", []Tool{echo})
+	if err != nil || !strings.HasSuffix(out, "ok") {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	want := (1000*1+100*10+10000*0.1+500*2)/1e6 + (2000*1+300*10)/1e6
+	if today, _ := l.Spent(); today < want-1e-9 || today > want+1e-9 {
+		t.Errorf("spent = %v, want %v", today, want)
+	}
+	if !strings.Contains(log.String(), "\nwarden budget: $0 spent on models today ($0.01") {
+		t.Errorf("alerts not logged: %q", log.String())
+	}
+
+	// openai usage, then a cap that refuses the next call before it is sent
+	srv, s := serve(t, func(http.Header, map[string]any) (int, string) {
+		return 200, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":100}}`
+	})
+	l2, err := meter.Open(meter.Config{PerDayUSD: 0.0025, Prices: prices, StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := Endpoint(EndpointConfig{Provider: "openai", BaseURL: srv.URL, Model: "m", MaxTokens: 100, Meter: l2})
+	if out, err := b.Do(context.Background(), "", "q", nil); err != nil || out != "hi" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	if today, _ := l2.Spent(); today < 0.002-1e-9 || today > 0.002+1e-9 {
+		t.Errorf("openai spent = %v", today)
+	}
+	_, err = b.Do(context.Background(), "", "q", nil) // $0.002 + $0.001 estimate > $0.0025
+	if err == nil || !strings.Contains(err.Error(), "daily model budget reached") || s.n != 1 {
+		t.Errorf("over budget: err=%v requests=%d", err, s.n)
 	}
 }

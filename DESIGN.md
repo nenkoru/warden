@@ -86,6 +86,8 @@ The built-ins:
 | `go-bump`, `npm-bump`, `pip-bump` | act | the worktree bump playbooks (§8a) |
 | `tool-clean` | act | a cache's own clean command |
 | `propose` | act | write a proposal file and ask |
+| `github-pause`, `github-issues`, `github-prs`, `github-main` | pause / observe | one GitHub repository: the kill switch, issues, PRs and their CI, main's CI and release state |
+| `work-issue`, `review-pr`, `merge-pr`, `release`, `delegate`, `pickup-branch` | act | the maintainer playbooks (`docs/usecases/github-maintainer.md`) |
 
 Advisories and news are not steps: they come from `[feeds]` (`osv = true` for every inventory component OSV knows,
 `releases` for GitHub repos, `rss` for anything else).
@@ -113,6 +115,9 @@ This covers kubectl, cloud CLIs, MCP tool results and HTTP APIs without new code
 | `dry_run_only` | never executes |
 | `where = "worktree"` | runs in a fresh git worktree on a new branch, never in the human's checkout |
 | `sandbox = true` | runs in the OS sandbox with an egress allowlist `net = [hosts]` |
+| `untrusted = "deny"` | never runs for a finding that carries untrusted input (`data.tainted`) |
+| `needs_brain` | refused when no brain may be called (budget spent); waits a tick when the routed brains are off-hours |
+| `clean_env` | sandboxed commands get no secrets in their environment |
 
 Global floors on top of these:
 
@@ -176,6 +181,13 @@ wake (timer | signal) → observe + inventory → news/advisories for the invent
   A crash mid-action leaves an unfinished begin; the next tick cleans up (drops the worktree) and retries if still
   needed. Each action has an idempotency key, and a failure is retried at most daily. The OS keeps it alive: launchd /
   systemd units for timer mode (nothing runs between ticks) or listen mode (one process asleep on its streams).
+
+**Pause, brains, budget, digest.** A domain's `[[pause]]` steps run first every tick; any finding (or a failing pause
+step) makes that tick observe and report only. `[brains.NAME]` plus `brain_for` route judgement calls per task
+(`auto` climbs `brain_auto`, free first); a brain may declare `unavailable` windows, and one whose upstream answers 403
+is routed around for a while. `[budget]` keeps a daily ledger (`internal/meter`): paid calls are metered, over the cap
+none is made, alerts ping at once, and the report header says `model spend today: $X of $Y`. `digest = "daily"`
+fires a `Digest` hook once a day.
 
 ## 4. Signals
 
@@ -322,7 +334,8 @@ packument or the PyPI release files.
   - dry-run first;
   - notifications and replies on the human's behalf are dry-run until enabled;
   - Warden never touches the human's agent configs;
-  - it never pushes or merges;
+  - it never pushes or merges (the `github-repo` maintainer mode pushes its own `warden/` branches and merges under
+    its rules);
   - it never deletes user data.
 
 ## 10. Registry formats (facts behind the adapters; details and verification marks in `research/registries.md`)

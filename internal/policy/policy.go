@@ -25,6 +25,16 @@ type Floors struct {
 	Where      string   `toml:"where"` // "", "worktree"
 	Sandbox    bool     `toml:"sandbox"`
 	Net        []string `toml:"net"` // egress allowlist when sandboxed
+	// Untrusted: "deny" — an action whose finding carries untrusted input
+	// (an issue, a PR from outside: data["tainted"] = "true") never runs.
+	Untrusted string `toml:"untrusted"`
+	// NeedsBrain: the act needs a model call; refused (with a clear line)
+	// when no brain may be called: none configured, the daily budget spent,
+	// or every brain routed to is unavailable now.
+	NeedsBrain bool `toml:"needs_brain"`
+	// CleanEnv: sandboxed commands get a minimal environment (PATH, HOME,
+	// locale, Go's dirs), none of Warden's secrets.
+	CleanEnv bool `toml:"clean_env"`
 }
 
 // Rule is one of the human's rules. Act and Target are globs ("" = any);
@@ -179,6 +189,9 @@ func (e *Engine) decide(a Action) Verdict {
 	}
 	if f.DryRunOnly {
 		return Verdict{Outcome: "report", Floor: "dry_run_only", Reasons: []string{"floor: dry-run only"}}
+	}
+	if f.Untrusted == "deny" && a.Params["tainted"] == "true" {
+		return Verdict{Outcome: "deny", Floor: "untrusted", Reasons: []string{"floor: untrusted input never drives " + a.Act}}
 	}
 	if f.Grant != "" && !slices.Contains(e.cfg.Grants, f.Grant) {
 		return Verdict{Outcome: "report", Floor: "grant", Reasons: []string{"floor: grant " + f.Grant + " missing"}}

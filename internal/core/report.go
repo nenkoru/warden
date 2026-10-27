@@ -34,6 +34,12 @@ func (in *Instance) report(ctx context.Context, t *Tick) error {
 	}
 	fmt.Fprintf(&b, "# Warden «%s» · %s\n\n", in.Cfg.Name, t.At.Format("2006-01-02 15:04"))
 	fmt.Fprintf(&b, "Domain: **%s** (`%s`) · mode: **%s** · triage v%d · sandbox: %s\n\n", in.Dom.Name, in.target(), mode, in.Triage.Triage().Version, in.SandboxLabel())
+	if in.paused != "" {
+		fmt.Fprintf(&b, "**⏸ Paused by the owner: %s** — this tick only observes and reports; every act is refused.\n\n", in.paused)
+	}
+	if sp := in.spendLine(); sp != "" {
+		fmt.Fprintf(&b, "%s\n\n", sp)
+	}
 	if in.FirstRun && in.Cfg.Mode == "" {
 		b.WriteString("> First run of this domain: dry-run, because `mode` is not set. Set `mode = \"act\"` or `\"dry-run\"` in warden.toml.\n\n")
 	}
@@ -108,6 +114,9 @@ func (in *Instance) report(ctx context.Context, t *Tick) error {
 		fmt.Fprintf(&b, "- hidden by triage: %d (see journal.jsonl)\n", len(ignored))
 	}
 	fmt.Fprintf(&b, "- components in the inventory: %d\n", t.Components)
+	if u := in.usageLine(); u != "" {
+		fmt.Fprintf(&b, "- brains: %s\n", u)
+	}
 	for _, s := range in.Dom.Act {
 		if g := gate(s.Floors, in.Cfg.Grants); g != "" {
 			fmt.Fprintf(&b, "- act %s: %s\n", s.Name, g)
@@ -152,7 +161,8 @@ func (in *Instance) report(ctx context.Context, t *Tick) error {
 	if t.Fresh > 0 && t.Report != "" && t.Held == "" {
 		title := fmt.Sprintf("Warden «%s»: %d new", in.Cfg.Name, t.Fresh)
 		if in.hasHook("Report") {
-			in.fire(ctx, "Report", "report", map[string]any{"name": in.Cfg.Name, "title": title, "report": t.Report, "summary": t.Summary, "fresh": t.Fresh})
+			in.fire(ctx, "Report", "report", map[string]any{"name": in.Cfg.Name, "title": title, "report": t.Report, "summary": t.Summary, "fresh": t.Fresh,
+				"attention": attention(t), "spend": in.spendLine(), "paused": in.paused})
 			in.pinged(t.At)
 		}
 	}

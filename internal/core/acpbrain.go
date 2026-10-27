@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,10 +30,12 @@ var claudeNet = []string{"api.anthropic.com", "*.anthropic.com", "claude.ai", "*
 // passEnv: what of Warden's environment an isolated agent sees.
 var passEnv = []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
 
-func (in *Instance) acpBrain() brain.Brain {
-	b := in.Cfg.Brain
+func (in *Instance) acpBrain(name string, b BrainConfig, paid bool) brain.Brain {
 	work := filepath.Join(in.Cfg.State, "work")
 	home := filepath.Join(in.Cfg.State, "agents", "acp")
+	if name != "default" {
+		home = filepath.Join(in.Cfg.State, "agents", name)
+	}
 	_ = os.MkdirAll(home, 0o700) // a failure surfaces when the agent starts
 	cfg := brain.ACPConfig{Command: b.ACP, Cwd: home, Confine: true, Timeout: 20 * time.Minute,
 		// the floors: read and edit inside the worktree (Confine), never anything else
@@ -53,9 +56,22 @@ func (in *Instance) acpBrain() brain.Brain {
 	}
 	net := b.Net
 	keychain := false
+	var loopback []int
 	if b.Isolate == "claude" {
 		cfg.CleanEnv, cfg.Env = true, claudeEnv(home)
 		cfg.SessionMeta = map[string]any{"claudeCode": map[string]any{"options": map[string]any{"settingSources": []string{}, "strictMcpConfig": true}}}
+		if paid && in.Ledger != nil { // metered: the agent's API calls go through the meter's local proxy
+			addr, port, err := in.meterProxy()
+			if err != nil {
+				in.note("brain " + name + ": the metering proxy failed (" + err.Error() + "): the agent is refused")
+				return failing{fmt.Errorf("brain %s: metering proxy: %w", name, err)}
+			}
+			cfg.Env = append(cfg.Env, "ANTHROPIC_BASE_URL=http://"+addr)
+			loopback = []int{port}
+			if net == nil {
+				net = meteredNet
+			}
+		}
 		if net == nil {
 			net = claudeNet
 		}
@@ -64,8 +80,17 @@ func (in *Instance) acpBrain() brain.Brain {
 		in.note("brain: " + b.ACP[len(b.ACP)-1] + " isolated (own config home, none of the owner's settings, MCP servers or CLAUDE.md), sandboxed, net: " + strings.Join(net, ", "))
 	}
 	runner := in.Runner
+	deny := in.secretFiles()
+	keyFile := b.APIKeyFile
 	cfg.Wrap = func(argv, env []string, cwd string) ([]string, []string, func(), error) {
-		p := box.Policy{Name: "brain", ReadWrite: []string{home, cwd}, Net: net, Keychain: keychain}
+		if keyFile != "" { // read at call time: a rotated secret is picked up
+			k, err := os.ReadFile(keyFile)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("api_key_file: %w", errors.Unwrap(err))
+			}
+			env = append(env, "ANTHROPIC_API_KEY="+strings.TrimSpace(string(k)))
+		}
+		p := box.Policy{Name: "brain", ReadWrite: []string{home, cwd}, Net: net, Keychain: keychain, Loopback: loopback, Deny: deny}
 		if net == nil {
 			p.Net = []string{} // the proxy refuses everything: no network at all would also stop the agent's own API
 		}
@@ -73,6 +98,15 @@ func (in *Instance) acpBrain() brain.Brain {
 	}
 	return authHint{brain.ACP(cfg)}
 }
+
+// meteredNet: a metered Claude Code reaches its API through the loopback
+// proxy; beyond that only the package registries (npx, Go modules).
+var meteredNet = []string{"registry.npmjs.org", "proxy.golang.org", "sum.golang.org"}
+
+// failing: a brain that can't start, with the reason.
+type failing struct{ err error }
+
+func (f failing) Do(context.Context, string, string, []brain.Tool) (string, error) { return "", f.err }
 
 // authHint: an agent that is not logged in says so in the report with the
 // owner's one-line remedy, not as a bare protocol error.

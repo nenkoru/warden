@@ -5,9 +5,11 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -21,16 +23,29 @@ import (
 
 // Config is warden.toml.
 type Config struct {
-	Name    string            `toml:"name"`
-	Domain  string            `toml:"domain"` // a folder, or "pack:NAME" (packs/NAME)
-	Params  map[string]string `toml:"params"`
-	Mode    string            `toml:"mode"` // act | dry-run; unset: a domain's first run is dry-run
-	Wake    Wake              `toml:"wake"`
-	Grants  []string          `toml:"grants"`
-	Rules   []policy.Rule     `toml:"rules"`
-	Brain   BrainConfig       `toml:"brain"`
-	Sandbox string            `toml:"sandbox"` // auto | sandbox-exec | bwrap | none (explicit: runs unsandboxed)
-	State   string            `toml:"state"`   // default .warden next to warden.toml
+	Name   string `toml:"name"`
+	Domain string `toml:"domain"` // a folder, or "pack:NAME" (packs/NAME)
+	// Params: strings for the pack's {placeholders}; arrays and tables
+	// (protected = [...], delegate_labels = { infra = "Ops" }) arrive as JSON.
+	Params    map[string]string `toml:"-"`
+	RawParams map[string]any    `toml:"params"`
+	Mode      string            `toml:"mode"` // act | dry-run; unset: a domain's first run is dry-run
+	Wake      Wake              `toml:"wake"`
+	Grants    []string          `toml:"grants"`
+	Rules     []policy.Rule     `toml:"rules"`
+	Brain     BrainConfig       `toml:"brain"`
+	// Brains: named brains (a local model, Claude …) and which does what:
+	// brain_for = { review-pr = "local", work-issue = "auto" }; "auto" climbs
+	// brain_auto (free first). [brain] alone means one brain for everything.
+	Brains    map[string]BrainConfig `toml:"brains"`
+	BrainFor  map[string]string      `toml:"brain_for"`
+	BrainAuto []string               `toml:"brain_auto"`
+	// Budget: a daily model-spend ledger; every paid brain call is metered.
+	Budget BudgetConfig `toml:"budget"`
+	// Digest: "daily" fires a Digest hook once a day with the day's summary.
+	Digest  string `toml:"digest"`
+	Sandbox string `toml:"sandbox"` // auto | sandbox-exec | bwrap | none (explicit: runs unsandboxed)
+	State   string `toml:"state"`   // default .warden next to warden.toml
 	// Replies on the owner's behalf (signal reply commands) are dry-run until true.
 	Replies     bool           `toml:"replies"`
 	Signals     []SignalSource `toml:"signals"`
@@ -71,6 +86,38 @@ type BrainConfig struct {
 	// Net (acp): the hosts the agent may reach (default for claude: the
 	// Anthropic API and login hosts, and the npm registry for npx).
 	Net []string `toml:"net"`
+	// APIKeyFile: the key read from this file at call time (a mounted
+	// secret), never logged; instead of api_key_env.
+	APIKeyFile string `toml:"api_key_file"`
+	// Free: costs nothing (a local model): not metered against the budget,
+	// though its calls are counted. Default: a base_url on loopback.
+	Free *bool `toml:"free"`
+	// Unavailable: when this brain must not be called: "HH:MM-HH:MM"
+	// windows and weekday names ("sat", "sun"), in TZ. The router skips it.
+	Unavailable []string `toml:"unavailable"`
+}
+
+// BudgetConfig: [budget] — USD per day; alerts become immediate pings.
+type BudgetConfig struct {
+	PerDayUSD      float64            `toml:"per_day_usd"`
+	AlertEveryUSD  float64            `toml:"alert_every_usd"`
+	BurnPerHourUSD float64            `toml:"burn_per_hour_usd"`
+	Prices         map[string]PriceUS `toml:"prices"`
+	TZ             string             `toml:"tz"`
+	// Upstream: the Anthropic API the metering proxy forwards to.
+	Upstream string `toml:"upstream"`
+	// UpstreamProxy: an HTTPS proxy on the way to Upstream ("http://host:port").
+	UpstreamProxy string `toml:"upstream_proxy"`
+	// FreeModels: models that cost $0 whatever the price table says.
+	FreeModels []string `toml:"free_models"`
+}
+
+// PriceUS: USD per million tokens.
+type PriceUS struct {
+	Input      float64 `toml:"input"`
+	Output     float64 `toml:"output"`
+	CacheRead  float64 `toml:"cache_read"`
+	CacheWrite float64 `toml:"cache_write"`
 }
 
 type ServeConfig struct {
@@ -127,26 +174,47 @@ func (c *Config) normalize() error {
 			return fmt.Errorf("rule %+v: then must be auto, ask or deny", r)
 		}
 	}
-	if c.Brain.Provider == "" && len(c.Brain.ACP) > 0 {
-		c.Brain.Provider = "acp"
+	c.Params = map[string]string{}
+	for k, v := range c.RawParams {
+		c.Params[k] = paramString(v)
 	}
-	switch c.Brain.Provider {
-	case "", "anthropic", "openai":
-	case "acp":
-		if len(c.Brain.ACP) == 0 {
-			return fmt.Errorf("brain: provider acp needs acp = [argv]")
+	for k, v := range c.Params { // files and roots: relative to warden.toml
+		if v != "" && (strings.HasSuffix(k, "_file") || k == "root") {
+			c.Params[k] = c.abs(v, ".")
 		}
-		if c.Brain.Isolate == "" {
-			c.Brain.Isolate = "none"
-			if slices.ContainsFunc(c.Brain.ACP, func(a string) bool { return strings.Contains(a, "claude") }) {
-				c.Brain.Isolate = "claude"
-			}
+	}
+	if err := c.Brain.normalize("brain", c); err != nil {
+		return err
+	}
+	for name, b := range c.Brains {
+		if name == "" || name == "auto" {
+			return fmt.Errorf("brains: %q is not a usable name", name)
 		}
-		if c.Brain.Isolate != "claude" && c.Brain.Isolate != "none" {
-			return fmt.Errorf("brain: isolate must be claude or none, not %q", c.Brain.Isolate)
+		if b.Provider == "" && len(b.ACP) == 0 {
+			return fmt.Errorf("brains.%s: a provider (anthropic, openai) or acp = [argv]", name)
 		}
+		if err := b.normalize("brains."+name, c); err != nil {
+			return err
+		}
+		c.Brains[name] = b
+	}
+	for task, name := range c.BrainFor {
+		if _, ok := c.Brains[name]; !ok && name != "auto" && (name != "default" || c.Brain.Provider == "") {
+			return fmt.Errorf("brain_for.%s: no brain %q in [brains]", task, name)
+		}
+	}
+	for _, name := range c.BrainAuto {
+		if _, ok := c.Brains[name]; !ok {
+			return fmt.Errorf("brain_auto: no brain %q in [brains]", name)
+		}
+	}
+	switch c.Digest {
+	case "", "daily", "off":
 	default:
-		return fmt.Errorf("brain: provider must be anthropic, openai or acp, not %q", c.Brain.Provider)
+		return fmt.Errorf("digest must be daily or off, not %q", c.Digest)
+	}
+	if c.Budget.PerDayUSD < 0 || c.Budget.AlertEveryUSD < 0 || c.Budget.BurnPerHourUSD < 0 {
+		return fmt.Errorf("budget: amounts must not be negative")
 	}
 	if err := c.Backoff.normalize(); err != nil {
 		return err
@@ -161,6 +229,69 @@ func (c *Config) normalize() error {
 		}
 	}
 	return nil
+}
+
+// paramString: a param value as the pack sees it (arrays and tables as JSON).
+func paramString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case nil:
+		return ""
+	case int64, float64, bool:
+		return fmt.Sprint(x)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
+}
+
+// normalize: one brain's provider, defaults and placeholders ({param} in
+// base_url, model and api_key_file come from params).
+func (b *BrainConfig) normalize(where string, c *Config) error {
+	ex := func(s string) string { return expandParams(s, c.Params) }
+	b.BaseURL, b.Model, b.APIKeyFile = ex(b.BaseURL), ex(b.Model), ex(b.APIKeyFile)
+	if b.APIKeyFile != "" {
+		b.APIKeyFile = c.abs(b.APIKeyFile, ".")
+	}
+	if b.Provider == "" && len(b.ACP) > 0 {
+		b.Provider = "acp"
+	}
+	switch b.Provider {
+	case "", "anthropic", "openai":
+	case "acp":
+		if len(b.ACP) == 0 {
+			return fmt.Errorf("%s: provider acp needs acp = [argv]", where)
+		}
+		if b.Isolate == "" {
+			b.Isolate = "none"
+			if slices.ContainsFunc(b.ACP, func(a string) bool { return strings.Contains(a, "claude") }) {
+				b.Isolate = "claude"
+			}
+		}
+		if b.Isolate != "claude" && b.Isolate != "none" {
+			return fmt.Errorf("%s: isolate must be claude or none, not %q", where, b.Isolate)
+		}
+	default:
+		return fmt.Errorf("%s: provider must be anthropic, openai or acp, not %q", where, b.Provider)
+	}
+	if _, err := parseWindows(b.Unavailable, b.TZ); err != nil {
+		return fmt.Errorf("%s.unavailable: %w", where, err)
+	}
+	return nil
+}
+
+var reParam = regexp.MustCompile(`\{([A-Za-z0-9_.-]+)\}`)
+
+func expandParams(s string, params map[string]string) string {
+	return reParam.ReplaceAllStringFunc(s, func(m string) string {
+		if v, ok := params[m[1:len(m)-1]]; ok {
+			return v
+		}
+		return m
+	})
 }
 
 // DomainDir: the pack folder. "pack:NAME" looks in ./packs, next to the

@@ -141,10 +141,22 @@ func Endpoint(cfg EndpointConfig) Brain   // anthropic | openai compatible (port
 func ACP(cfg ACPConfig) Brain             // acp-go-sdk: start the agent, one session per call, kill after; permission requests → cfg.Allow(toolKind, paths) bool
 ```
 
+## internal/github — one repository over the REST API
+
+```go
+func New(base, repo, tokenFile string) (*Client, error) // the token from a file (not world-readable); only ever in the Authorization header
+func (c *Client) Redact(s string) string; func (c *Client) Contains(s string) bool
+// issues, PRs (files, diff, reviews: COMMENT only, squash merge pinned to a SHA), check runs, statuses,
+// workflow runs and failed-job logs, refs and tags, branches, contents; GraphQL markReady and pin
+const CredentialHelper // a git credential helper reading $WARDEN_GIT_TOKEN_FILE
+```
+
+`githubtest.New(t, token, login, repo)` is an in-memory fake of the same API for offline tests.
+
 ## internal/domain — the manifest
 
 ```go
-type Domain struct { Name, Description string; Params map[string]string; Observe, Inventory, Act, Check []Step; Feeds Feeds; MCP map[string]MCPRef; Dir string }
+type Domain struct { Name, Description string; Params map[string]string; Pause, Observe, Inventory, Act, Check []Step; Feeds Feeds; MCP map[string]MCPRef; Dir string }
 type Step struct { Name string; Run Run; Map *Map; Interpret bool; Floors policy.Floors; Every string }
 type Run struct { Cmd []string; MCP, Tool string; Args map[string]any; Builtin string; With map[string]any }
 func Load(dir string, params map[string]string) (*Domain, error)
@@ -153,7 +165,8 @@ func (m Map) Findings(raw []byte, params map[string]string) ([]Finding, error); 
 
 ## internal/core
 
-The loop, state, triage, improve, signals, report, listen, units, CLI glue.
+The loop, state, triage, improve, signals, report, listen, units, CLI glue; `brains.go` (named brains, routing,
+availability windows, metering through `internal/meter`), `pause.go` (the kill switch, budget alerts, the digest).
 
 ## Order of work
 

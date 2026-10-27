@@ -40,6 +40,32 @@ system, never by a model's good behavior.
   invariants (a high vulnerability, low disk or a failing check can never be hidden). Floors, grants, policy rules and
   the evaluator are outside its reach.
 
+### Maintainer mode (the `github-repo` pack)
+
+In this mode Warden pushes branches and merges pull requests in one repository, so the threat model widens: anyone
+who can open an issue or a PR can put text in front of the model. The limits, all in code:
+
+- Issue and PR titles, bodies, comments, CI logs and outside code are data: fenced as untrusted wherever they reach a
+  model, and marked tainted. The floor `untrusted = "deny"` keeps tainted findings away from merges, releases and
+  branch pick-ups; outside PRs are reviewed from their diff and CI results only — their code is never checked out or
+  run, and the review never approves.
+- A change from an issue that touches protected paths (`.github/**`, release config, `SECURITY.md`, `LICENSE`,
+  `NOTICE`, the pack, `warden.toml`, anything named like a secret, token or signing file) is never pushed unless the
+  owner wrote the issue, and is then labeled `needs-human`; Warden never merges a PR touching them. A diff containing
+  the token is refused before any push.
+- The GitHub token is a fine-grained PAT for this one repository without the workflows or administration
+  permissions, read from a file (refused if readable by others), sent only in the API's `Authorization` header and to
+  git through a credential helper that reads the file — never in argv, URLs, the environment, logs, reports, the
+  journal, comments or errors (redacted everywhere as a second line), and unreadable inside the sandbox.
+- Merges require every reported check green, a mergeable PR, no `needs-human` label and no protected path, and are
+  pinned to the head SHA; branch protection on `main` (required PR and checks, no force pushes) is the outer gate.
+  Releases only from green `main`, at most one a day, never a major version, never while paused.
+- The owner's kill switch (a `warden-pause` label or a `PAUSE` file on `main`) is read first every tick and again right
+  before a merge or a tag; if it can't be read, the tick is paused.
+- Model spend is capped per day in code, with a spend limit on the API workspace as the outer backstop.
+- Residual risk: a prompt-injected brain can still write a wrong but plausible change to unprotected code; it lands
+  only through CI and the merge rules above, and every merge is a squash commit naming the issue and the brain.
+
 ### Extensions from registries
 
 - Extensions (MCP servers, Agent Skills, plugins, Pi packages) are pinned in `warden.lock` by version plus integrity
@@ -78,7 +104,8 @@ system, never by a model's good behavior.
 
 ### What Warden never does
 
-- push, merge, or touch your checkout (changes land in a new worktree branch);
+- push, merge, or touch your checkout (changes land in a new worktree branch) — except the `github-repo` pack's
+  maintainer mode above, which pushes only its own `warden/` branches and merges only under those rules;
 - delete user data (only a tool's own clean command, never a generic `rm`; it never empties the Trash);
 - modify your agent harness configs, settings, MCP servers or memory;
 - send messages or replies on your behalf unless `replies = true` (hooks you configure are your commands);

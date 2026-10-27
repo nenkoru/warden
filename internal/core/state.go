@@ -36,6 +36,9 @@ type State struct {
 	Watch   map[string]*Advisory
 	Domains map[string]int64
 	Pings   Pings // the interrupt backoff (backoff.go)
+	// BrainDown: brains whose upstream refused them, until (unix).
+	BrainDown map[string]int64
+	Digest    DigestState
 
 	lock *os.File
 }
@@ -72,6 +75,15 @@ type Result struct {
 	Log     []string `json:"log,omitempty"`
 	At      int64    `json:"at"`
 	Refused bool     `json:"refused,omitempty"` // not run (no sandbox, a hook blocked): not a failure
+	// Deferred: nothing happened yet (CI running, a brain off-hours); never stored.
+	Deferred bool `json:"-"`
+}
+
+// DigestState: the day's lines for the daily digest (digest.go).
+type DigestState struct {
+	Day   string   `json:"day,omitempty"`
+	Lines []string `json:"lines,omitempty"`
+	Spend string   `json:"spend,omitempty"`
 }
 
 // Advisory: "versions below Fixed are vulnerable", from a signal.
@@ -96,19 +108,23 @@ func OpenState(dir string) (*State, error) {
 		return nil, errors.New("another warden tick is running here")
 	}
 	s := &State{Dir: dir, lock: f, Seen: map[string]*Seen{}, Feeds: map[string]string{}, Pending: map[string]*Pend{},
-		Done: map[string]*Result{}, Handled: map[string]bool{}, Watch: map[string]*Advisory{}, Domains: map[string]int64{}}
+		Done: map[string]*Result{}, Handled: map[string]bool{}, Watch: map[string]*Advisory{}, Domains: map[string]int64{}, BrainDown: map[string]int64{}}
 	for name, v := range s.files() {
 		if err := readJSON(filepath.Join(dir, name), v); err != nil {
 			s.Close()
 			return nil, err
 		}
 	}
+	if s.BrainDown == nil {
+		s.BrainDown = map[string]int64{}
+	}
 	return s, nil
 }
 
 func (s *State) files() map[string]any {
 	return map[string]any{"seen.json": &s.Seen, "feeds.json": &s.Feeds, "pending.json": &s.Pending, "done.json": &s.Done,
-		"signals.json": &s.Handled, "watch.json": &s.Watch, "domains.json": &s.Domains, "pings.json": &s.Pings}
+		"signals.json": &s.Handled, "watch.json": &s.Watch, "domains.json": &s.Domains, "pings.json": &s.Pings,
+		"brains.json": &s.BrainDown, "digest.json": &s.Digest}
 }
 
 // Save writes every file atomically.

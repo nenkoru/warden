@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nenkoru/warden/internal/meter"
 	"github.com/nenkoru/warden/internal/version"
 )
 
@@ -32,6 +33,17 @@ type EndpointConfig struct {
 	Fallbacks *bool
 	HTTP      *http.Client // default: 10-minute timeout
 	Log       io.Writer    // one line per tool call; default: discard
+	// Meter, if set, is asked before every request (Allow, with Estimate of
+	// it) and told the usage after every response (Record). A *meter.Ledger
+	// is one.
+	Meter Meter
+}
+
+// Meter is a model budget: see internal/meter.
+type Meter interface {
+	Estimate(model string, maxTokens, inputBytes int) float64
+	Allow(estimateUSD float64) error
+	Record(model string, u meter.Usage) (float64, []meter.Alert)
 }
 
 // Normalize validates the config and fills in the defaults.
@@ -108,6 +120,17 @@ func (e *endpoint) run(ctx context.Context, tools []Tool, name string, args map[
 	return out, ok
 }
 
+// record tells the meter one response's usage; model "" is the configured one.
+func (e *endpoint) record(model string, u meter.Usage) {
+	if e.cfg.Meter == nil {
+		return
+	}
+	_, alerts := e.cfg.Meter.Record(or(model, e.cfg.Model), u)
+	for _, a := range alerts {
+		fmt.Fprintln(e.cfg.Log, a.Text) // "warden budget: …"
+	}
+}
+
 // backoff before retry attempt n (0-based); a variable so tests can shorten it.
 var backoff = func(n int) time.Duration { return time.Duration(5<<n) * time.Second }
 
@@ -115,6 +138,13 @@ func (e *endpoint) post(ctx context.Context, url string, hdr map[string]string, 
 	bs, err := json.Marshal(body)
 	if err != nil {
 		return err
+	}
+	if m := e.cfg.Meter; m != nil {
+		if err := m.Allow(m.Estimate(e.cfg.Model, e.cfg.MaxTokens, len(bs))); errors.Is(err, meter.ErrOverBudget) {
+			return fmt.Errorf("daily model budget reached: %w", err)
+		} else if err != nil {
+			return fmt.Errorf("model budget: %w", err)
+		}
 	}
 	var resp *http.Response
 	for attempt := 0; ; attempt++ { // 429 / 5xx: a few patient retries
@@ -186,10 +216,19 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 		var resp struct {
 			Content    json.RawMessage `json:"content"`
 			StopReason string          `json:"stop_reason"`
+			Model      string          `json:"model"`
+			Usage      struct {
+				Input      int64 `json:"input_tokens"`
+				Output     int64 `json:"output_tokens"`
+				CacheRead  int64 `json:"cache_read_input_tokens"`
+				CacheWrite int64 `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
 		}
 		if err := e.post(ctx, e.cfg.BaseURL+"/v1/messages", hdr, body, &resp); err != nil {
 			return text.String(), err
 		}
+		e.record(resp.Model, meter.Usage{Input: resp.Usage.Input, Output: resp.Usage.Output,
+			CacheRead: resp.Usage.CacheRead, CacheWrite: resp.Usage.CacheWrite})
 		var blocks []struct {
 			Type  string         `json:"type"`
 			Text  string         `json:"text"`
@@ -255,10 +294,16 @@ func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool
 				Message      json.RawMessage `json:"message"`
 				FinishReason string          `json:"finish_reason"`
 			} `json:"choices"`
+			Model string `json:"model"`
+			Usage struct {
+				Prompt     int64 `json:"prompt_tokens"`
+				Completion int64 `json:"completion_tokens"`
+			} `json:"usage"`
 		}
 		if err := e.post(ctx, e.cfg.BaseURL+"/chat/completions", hdr, body, &resp); err != nil {
 			return text.String(), err
 		}
+		e.record(resp.Model, meter.Usage{Input: resp.Usage.Prompt, Output: resp.Usage.Completion})
 		if len(resp.Choices) == 0 {
 			return text.String(), errors.New("no choices in the response")
 		}
