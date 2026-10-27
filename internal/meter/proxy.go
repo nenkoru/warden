@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,7 +61,11 @@ func (l *Ledger) StartProxy(upstream string) (*Proxy, error) {
 				return nil
 			}
 			sse := strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
-			resp.Body = &meteredBody{rc: resp.Body, l: l, sse: sse, model: info.model}
+			mb := &meteredBody{rc: resp.Body, l: l, sse: sse, model: info.model}
+			if v, err := strconv.ParseFloat(resp.Header.Get(CostHeader), 64); err == nil { // an exact per-call cost wins over the price table
+				mb.cost, mb.hasCost = v, true
+			}
+			resp.Body = mb
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
@@ -132,16 +137,21 @@ func (w wireUsage) usage() Usage {
 // meteredBody passes a response through untouched while reading its usage,
 // and records it once when the body ends (EOF, error or Close).
 type meteredBody struct {
-	rc    io.ReadCloser
-	l     *Ledger
-	sse   bool
-	mu    sync.Mutex
-	model string
-	u     Usage
-	seen  bool
-	buf   []byte // SSE: the partial line; JSON: the body so far
-	once  sync.Once
+	rc      io.ReadCloser
+	l       *Ledger
+	sse     bool
+	mu      sync.Mutex
+	model   string
+	u       Usage
+	seen    bool
+	buf     []byte // SSE: the partial line; JSON: the body so far
+	once    sync.Once
+	cost    float64 // from CostHeader, if the upstream sent it
+	hasCost bool
 }
+
+// CostHeader: LiteLLM's per-call cost in USD.
+const CostHeader = "x-litellm-response-cost"
 
 func (b *meteredBody) Read(p []byte) (int, error) {
 	n, err := b.rc.Read(p)
@@ -249,7 +259,10 @@ func (b *meteredBody) finish() {
 		b.buf = nil
 		model, u, seen := b.model, b.u, b.seen
 		b.mu.Unlock()
-		if seen {
+		switch {
+		case b.hasCost:
+			b.l.RecordCost(model, u, b.cost)
+		case seen:
 			b.l.Record(model, u)
 		}
 	})

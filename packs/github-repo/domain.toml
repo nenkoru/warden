@@ -21,7 +21,7 @@ checks_mode = "ci"                       # ci: no repository code runs here, CI 
 checks      = '["go vet ./...", "go test -race -count=1 ./...", "GOLANGCI_LINT_CACHE=$TMPDIR/golangci golangci-lint run ./..."]'
 required_checks    = ""                  # check names that must be present and green (default: every reported check green)
 protected          = '[".github/**", ".goreleaser.yaml", ".goreleaser.yml", "SECURITY.md", "LICENSE", "NOTICE", "packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"]'
-protected_names    = "secret,token,sign" # any file whose name contains one of these
+protected_names    = "secret,token,credential,signing,signature,cosign,gpg" # any file whose name contains one of these
 max_issues_per_day = "3"
 trusted_authors    = ""                  # logins whose PRs merge under Warden's own rules (the owner's other agents)
 release            = "auto"              # auto | off

@@ -159,3 +159,16 @@ func TestProxyPassThrough(t *testing.T) {
 		t.Errorf("count_tokens was metered: %v", today)
 	}
 }
+
+// LiteLLM's per-call cost header wins over the price table.
+func TestProxyCostHeader(t *testing.T) {
+	l := open(t, Config{PerDayUSD: 1000, StateDir: t.TempDir()})
+	p, _ := proxyFor(t, l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(CostHeader, "0.0425")
+		_, _ = io.WriteString(w, `{"model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000}}`)
+	}))
+	resp := post(t, p, "/v1/messages", `{"model":"claude-opus-5-5","max_tokens":10,"messages":[]}`)
+	_, _ = io.ReadAll(resp.Body)
+	spentEventually(t, l, 0.0425)
+}

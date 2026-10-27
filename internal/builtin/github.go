@@ -237,7 +237,7 @@ var DefaultProtected = []string{".github/**", ".goreleaser.yaml", ".goreleaser.y
 	"packs/github-repo/**", "warden.toml", "*.warden.toml", "warden.lock"}
 
 // DefaultProtectedNames: any file whose name contains one of these.
-var DefaultProtectedNames = []string{"secret", "token", "sign"}
+var DefaultProtectedNames = []string{"secret", "token", "credential", "signing", "signature", "cosign", "gpg"} // not "sign": signals.go, DESIGN.md
 
 // Protected: the files among changed that match a protected pattern (globs
 // with ** across folders) or whose base name contains a protected word.

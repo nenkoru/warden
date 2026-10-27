@@ -297,7 +297,15 @@ func (l *Ledger) Allow(estimateUSD float64) error {
 // Record adds one response's usage and returns its cost and the alerts it
 // raised. Every alert is also queued for Alerts, the delivery queue.
 func (l *Ledger) Record(model string, u Usage) (float64, []Alert) {
-	cost := l.cfg.Prices.Lookup(model).Cost(u)
+	return l.RecordCost(model, u, l.cfg.Prices.Lookup(model).Cost(u))
+}
+
+// RecordCost is Record with the cost already known (e.g. a proxy's
+// per-call cost header, such as LiteLLM's x-litellm-response-cost).
+func (l *Ledger) RecordCost(model string, u Usage, cost float64) (float64, []Alert) {
+	if cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
+		cost = l.cfg.Prices.Lookup(model).Cost(u)
+	}
 	now := l.cfg.Now()
 	unlock, err := l.lock()
 	if err != nil { // can't lock: still count it in this process

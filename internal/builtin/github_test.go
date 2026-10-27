@@ -649,7 +649,7 @@ func TestGitHubNote(t *testing.T) {
 }
 
 func TestProtected(t *testing.T) {
-	got := Protected([]string{".github/workflows/ci.yml", "a/b/prod.warden.toml", "packs/github-repo/domain.toml", "internal/x.go", "docs/signing.md", "SECURITY.md", "x/LICENSE"},
+	got := Protected([]string{".github/workflows/ci.yml", "a/b/prod.warden.toml", "packs/github-repo/domain.toml", "internal/x.go", "docs/signing.md", "SECURITY.md", "x/LICENSE", "internal/core/signals.go", "DESIGN.md"},
 		DefaultProtected, DefaultProtectedNames)
 	want := []string{".github/workflows/ci.yml", "SECURITY.md", "a/b/prod.warden.toml", "docs/signing.md", "packs/github-repo/domain.toml", "x/LICENSE"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
