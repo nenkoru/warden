@@ -264,6 +264,8 @@ type File struct {
 	Filename         string `json:"filename"`
 	PreviousFilename string `json:"previous_filename"`
 	Status           string `json:"status"`
+	Additions        int    `json:"additions"`
+	Deletions        int    `json:"deletions"`
 }
 
 type CheckRun struct {
@@ -456,6 +458,20 @@ func (c *Client) Comment(ctx context.Context, n int, body string) error {
 func (c *Client) Comments(ctx context.Context, n int) ([]Comment, error) {
 	var cs []Comment
 	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?per_page=100", n), nil, &cs)
+}
+
+// PRReview: a review on a pull request.
+type PRReview struct {
+	ID    int64  `json:"id"`
+	User  User   `json:"user"`
+	State string `json:"state"`
+	Body  string `json:"body"`
+}
+
+// Reviews: a pull request's reviews.
+func (c *Client) Reviews(ctx context.Context, n int) ([]PRReview, error) {
+	var rs []PRReview
+	return rs, c.do(ctx, "GET", c.repoPath("/pulls/%d/reviews?per_page=100", n), nil, &rs)
 }
 
 func (c *Client) AddLabels(ctx context.Context, n int, labels ...string) error {

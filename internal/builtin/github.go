@@ -508,6 +508,62 @@ func smallIssue(env *Env, labels []string, title string) bool {
 	return reDepsTitle.MatchString(strings.TrimSpace(title))
 }
 
+// issueSize: S | M | L | XL from the labels (small, size:X), else from the
+// lines the change touched (data's lines_added + lines_deleted); "" unknown.
+func issueSize(labels []string, data map[string]string) string {
+	for _, l := range labels {
+		l = strings.ToLower(strings.TrimSpace(l))
+		if l == "small" {
+			return "S"
+		}
+		if v, ok := strings.CutPrefix(l, "size:"); ok {
+			switch v = strings.ToUpper(strings.TrimSpace(v)); v {
+			case "S", "M", "L", "XL":
+				return v
+			}
+		}
+	}
+	a, errA := strconv.Atoi(data["lines_added"])
+	d, errD := strconv.Atoi(data["lines_deleted"])
+	if errA != nil || errD != nil || a+d == 0 {
+		return ""
+	}
+	return sizeOfLines(a + d)
+}
+
+// sizeOfLines: S < 50 lines changed, M < 200, L < 800, else XL.
+func sizeOfLines(n int) string {
+	switch {
+	case n < 50:
+		return "S"
+	case n < 200:
+		return "M"
+	case n < 800:
+		return "L"
+	}
+	return "XL"
+}
+
+// diffStat: the staged change's files and lines into data.
+func diffStat(ctx context.Context, wt string, data map[string]string) {
+	out, err := git(ctx, wt, "diff", "--cached", "--numstat", "--no-renames")
+	if err != nil {
+		return
+	}
+	files, added, deleted := 0, 0, 0
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		files++
+		a, _ := strconv.Atoi(f[0]) // "-" for a binary file
+		d, _ := strconv.Atoi(f[1])
+		added, deleted = added+a, deleted+d
+	}
+	data["files"], data["lines_added"], data["lines_deleted"] = strconv.Itoa(files), strconv.Itoa(added), strconv.Itoa(deleted)
+}
+
 // prType: a conventional-commit type from an issue's labels.
 func prType(labels []string) string {
 	for _, l := range labels {

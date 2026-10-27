@@ -24,6 +24,9 @@ type Result struct {
 	// Deferred: nothing happened yet and nothing is remembered: the act is
 	// proposed again next tick (CI still running, the local model off-hours).
 	Deferred bool
+	// Data: what the act did to a task, for the experiment log (issue, pr,
+	// phase, brain, size, files, lines, tool errors, …); nil: not a task.
+	Data map[string]string
 }
 
 // Act runs one built-in act for a finding.

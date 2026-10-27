@@ -31,6 +31,8 @@ delegate_labels    = ""                  # label → agent, e.g. { infra = "Ops"
 delegate_default   = ""                  # the agent for hard issues when no paid brain may take them
 pickup_branches    = ""                  # branch prefixes a delegate pushes to; Warden opens the PR
 pause_label        = "warden-pause"
+experiment_log     = "on"                # on: every task (an issue worked across ticks) is recorded in <state>/tasks.jsonl
+experiment_acts    = ""                  # acts whose results are task records (default: work-issue, merge-pr, pickup-branch)
 
 # The kill switch, checked first every tick: any finding → this tick only
 # observes and reports; every act is refused.
@@ -47,7 +49,7 @@ name = "prs"                             # open PRs → merge-pr (own, Dependabo
 run  = { builtin = "github-prs" }
 
 [[observe]]
-name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow
+name = "main"                            # CI on main (red → "check", high), unreleased merged PRs → release, the release workflow, reverts of Warden's PRs
 run  = { builtin = "github-main" }
 
 [[act]]

@@ -74,6 +74,7 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 	mode := map[bool]string{true: "dry-run", false: "act"}[in.DryRun]
 	in.St.Journal("tick.begin", map[string]any{"tick": t.ID, "domain": in.Dom.Name, "mode": mode, "sandbox": in.Runner})
 	in.fire(ctx, "Wake", in.Cfg.Name, map[string]any{"name": in.Cfg.Name, "domain": in.Dom.Name, "mode": mode})
+	in.idleTick(now)
 	_, in.quiet = in.mayPing(now, false)
 	in.mu.Lock()
 	in.scores = nil // the owner may have labeled since the last tick
@@ -107,6 +108,7 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 		if s == nil {
 			s = &Seen{First: now.Unix(), Title: f.Title}
 			in.St.Seen[f.ID] = s
+			in.taskEvent(f) // a task event an observer saw (a revert): recorded once
 		}
 		s.Last, s.Title = now.Unix(), f.Title
 		it.New = s.Reported == 0
@@ -562,8 +564,10 @@ func (in *Instance) act(ctx context.Context, it *Item, step domain.Step, key, id
 		return
 	}
 	in.St.Journal("action.begin", map[string]any{"key": key, "act": step.Name})
+	start, before := time.Now(), in.usageTotal()
 	r := in.run(ctx, it.Finding, step)
 	in.St.Journal("action.end", map[string]any{"key": key, "ok": r.OK, "summary": r.Summary})
+	in.recordTask(step.Name, key, r, time.Since(start), before)
 	if r.Deferred { // nothing happened: proposed again next tick, nothing remembered
 		it.Why += "; " + r.Summary
 		in.noteOnce(step.Name + ": " + r.Summary)
@@ -592,7 +596,7 @@ func (in *Instance) run(ctx context.Context, f domain.Finding, step domain.Step)
 	case step.Run.Builtin != "":
 		with := domain.ExpandArgs(step.Run.With, params)
 		br := builtin.Act(ctx, step.Run.Builtin, with, f, in.env(with))
-		r.OK, r.Summary, r.Branch, r.File, r.Log, r.Refused, r.Deferred = br.OK, br.Summary, br.Branch, br.File, br.Log, br.Refused, br.Deferred
+		r.OK, r.Summary, r.Branch, r.File, r.Log, r.Refused, r.Deferred, r.Data = br.OK, br.Summary, br.Branch, br.File, br.Log, br.Refused, br.Deferred, br.Data
 		return r
 	case len(step.Run.Cmd) > 0:
 		argv := domain.Expand(step.Run.Cmd, params)

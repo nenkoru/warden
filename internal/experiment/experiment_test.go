@@ -1,0 +1,77 @@
+package experiment
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCategories(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase string
+		ok    bool
+		text  string
+		data  map[string]string
+		want  []string
+	}{
+		{"success", "new", true, "draft PR #3 for issue #2 (brain: local)", nil, nil},
+		{"merge", "merge", true, "merged PR #3 (own, squash) → abc1234", nil, nil},
+		{"fix round pushed: CI was red", "fix", true, "PR #3: fix round pushed (brain: local)", nil, []string{WrongEdit}},
+		{"fix round changed nothing", "fix", false, "PR #3: the fix round (brain: local) changed nothing", nil, []string{WrongEdit}},
+		{"give-up", "giveup", false, "PR #3 stayed red after a fix round: labeled needs-human", nil, []string{GaveUp}},
+		{"no change", "new", false, "issue #2: the brain (local) made no change", nil, []string{WrongEdit}},
+		{"local checks red", "new", false, "issue #2: checks red after one fix attempt (brain: local); commented on the issue, no PR", nil, []string{WrongEdit}},
+		{"protected path", "new", false, "issue #2: refused — the change touches protected paths (.github/x.yml); labeled needs-human, nothing pushed", nil, []string{WrongEdit}},
+		{"max steps", "new", false, "issue #2: the brain local failed (stopped after 40 steps (max_steps)); tried again next tick", nil, []string{Loop}},
+		{"repeated calls", "new", false, "issue #2: the brain (local) made no change", map[string]string{"repeated_calls": "5"}, []string{WrongEdit, Loop}},
+		{"context", "new", false, "brain local failed: http://llm/v1/chat/completions: 400 Bad Request: This model's maximum context length is 32768 tokens", nil, []string{ContextLimit}},
+		{"prompt too long", "fix", false, "prompt is too long: 210000 tokens > 200000 maximum", nil, []string{ContextLimit, WrongEdit}},
+		{"timeout", "new", false, "brain local failed: context deadline exceeded", nil, []string{Timeout}},
+		{"unknown tool in the log", "new", false, "warden brain: run_shell → error: unknown tool run_shell", nil, []string{ToolCall}},
+		{"bad arguments", "new", false, "error: arguments are not a JSON object: invalid character", nil, []string{ToolCall}},
+		{"tool errors on a failure", "new", false, "issue #2: the brain (local) made no change", map[string]string{"tool_errors": "3"}, []string{ToolCall, WrongEdit}},
+		{"tool errors on a success don't count", "new", true, "draft PR #3", map[string]string{"tool_errors": "3"}, nil},
+		{"the model says it can't", "new", false, "brain local: I cannot do this without network access", nil, []string{GaveUp}},
+		{"unexplained", "merge", false, "merge-pr: 502 Bad Gateway", nil, []string{Other}},
+	}
+	for _, c := range cases {
+		if got := Categories(c.phase, c.ok, c.text, c.data); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestAppendLoadRoundTrip(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state", "tasks.jsonl")
+	at := time.Date(2026, 10, 27, 1, 2, 3, 0, time.UTC)
+	e := Event{At: at, Act: "work-issue", Issue: 7, Phase: "new", Brain: "local", OK: true, TokensIn: 10,
+		Data: map[string]string{"size": "M", "files": "2", "issue": "999"}}
+	if err := Append(p, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := Append(p, Event{At: at, Kind: "idle", Minutes: 10, Reason: "off-hours"}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), `"size":"M"`) || !strings.Contains(string(b), `"issue":7`) || strings.Contains(string(b), `"999"`) {
+		t.Fatalf("data must be flattened, never over the record's own fields:\n%s", b)
+	}
+	_ = os.WriteFile(p, append(b, []byte("not json\n")...), 0o600)
+	evs, err := Load(p)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("%v %+v", err, evs)
+	}
+	if evs[0].Kind != "act" || evs[0].Issue != 7 || evs[0].Data["size"] != "M" || evs[0].Data["files"] != "2" || evs[1].Kind != "idle" || evs[1].Minutes != 10 {
+		t.Fatalf("%+v", evs)
+	}
+	if evs, err := Load(filepath.Join(t.TempDir(), "none")); err != nil || evs != nil {
+		t.Fatal("a missing log is no events")
+	}
+}

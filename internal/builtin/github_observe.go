@@ -475,6 +475,13 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 		f.Data = map[string]string{"sha": sha}
 		out = append(out, f)
 	}
+	if experimentOn(env) {
+		rs, err := observeReverts(ctx, c, env)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, rs...)
+	}
 	if param(nil, env, "release", "auto") == "off" {
 		return out, nil
 	}

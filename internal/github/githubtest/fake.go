@@ -29,10 +29,10 @@ type PR struct {
 	Diff  string
 }
 
-// Review: a posted review.
+// Review: a posted review (User: its author; "" = the token's user).
 type Review struct {
-	N                int
-	SHA, Event, Body string
+	N                      int
+	SHA, Event, Body, User string
 }
 
 // Job: a workflow job and its log.
@@ -60,13 +60,16 @@ type Fake struct {
 	Branches map[string]string    // name → sha
 	Files    map[string]bool      // paths present on main (PAUSE)
 	Comments map[int][]string
-	Reviews  []Review
-	Merged   []int
-	Refs     map[string]string // refs created through the API → sha
-	Bodies   []string          // every request body
-	Requests []string          // "METHOD path"
-	Ready    []int             // PRs marked ready for review
-	next     int
+	// CommentBy: the authors of Comments, index by index ("" or missing =
+	// the token's user).
+	CommentBy map[int][]string
+	Reviews   []Review
+	Merged    []int
+	Refs      map[string]string // refs created through the API → sha
+	Bodies    []string          // every request body
+	Requests  []string          // "METHOD path"
+	Ready     []int             // PRs marked ready for review
+	next      int
 	// ResolveHead: the sha of a pushed branch (tests: from the bare remote).
 	ResolveHead func(branch string) string
 	// FilesOf: the changed files of a pushed branch (tests: from the bare remote).
@@ -81,7 +84,7 @@ func New(t testing.TB, token, login, repo string) *Fake {
 	f := &Fake{Token: token, Login: login, Repo: repo, Now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 		Issues: map[int]*github.Issue{}, PRs: map[int]*PR{}, Checks: map[string][]github.CheckRun{}, Status: map[string]string{},
 		Jobs: map[int64][]Job{}, Dates: map[string]time.Time{}, Branches: map[string]string{"main": "main0"}, Files: map[string]bool{},
-		Comments: map[int][]string{}, Refs: map[string]string{}, next: 1}
+		Comments: map[int][]string{}, CommentBy: map[int][]string{}, Refs: map[string]string{}, next: 1}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
 	return f
@@ -161,6 +164,17 @@ func (f *Fake) MergedPR(title, ref string, at time.Time, ls ...string) int {
 	f.PRs[n] = &PR{PR: github.PR{Number: n, Title: title, State: "closed", Merged: true, MergedAt: &at, User: github.User{Login: "someone"},
 		Head: github.Ref{Ref: ref, SHA: "h" + strconv.Itoa(n)}, Base: github.Ref{Ref: "main"}, Labels: labels(ls...), MergeCommitSHA: "m" + strconv.Itoa(n)}}
 	return n
+}
+
+// AddComment adds a comment by author on an issue or PR.
+func (f *Fake) AddComment(n int, author, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for len(f.CommentBy[n]) < len(f.Comments[n]) {
+		f.CommentBy[n] = append(f.CommentBy[n], "")
+	}
+	f.Comments[n] = append(f.Comments[n], body)
+	f.CommentBy[n] = append(f.CommentBy[n], author)
 }
 
 // With runs fn under the fake's lock (to inspect or change state).
@@ -255,7 +269,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		case m[2] == "comments":
 			var out []github.Comment
 			for i, c := range f.Comments[n] {
-				out = append(out, github.Comment{ID: int64(i + 1), Body: c})
+				who := f.Login
+				if by := f.CommentBy[n]; i < len(by) && by[i] != "" {
+					who = by[i]
+				}
+				out = append(out, github.Comment{ID: int64(i + 1), Body: c, User: github.User{Login: who}})
 			}
 			js(out)
 		case m[2] == "labels":
@@ -341,6 +359,16 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			js(out)
 		case "reviews":
+			if r.Method == "GET" {
+				out := []github.PRReview{}
+				for i, rv := range f.Reviews {
+					if rv.N == n {
+						out = append(out, github.PRReview{ID: int64(i + 1), User: github.User{Login: or(rv.User, f.Login)}, State: "COMMENTED", Body: rv.Body})
+					}
+				}
+				js(out)
+				return
+			}
 			f.Reviews = append(f.Reviews, Review{N: n, SHA: str(in["commit_id"]), Event: str(in["event"]), Body: str(in["body"])})
 			js(map[string]any{"id": len(f.Reviews)})
 		case "merge":
@@ -456,3 +484,10 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func str(v any) string { s, _ := v.(string); return s }
+
+func or(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
