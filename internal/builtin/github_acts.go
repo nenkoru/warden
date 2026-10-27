@@ -568,6 +568,9 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if len(ri.Merged) == 0 || ri.Open != nil {
 		return Result{OK: true, Summary: "release: nothing to do"}
 	}
+	if ri.Tag == "" {
+		return firstRelease(ctx, c, env, ri)
+	}
 	if ri.Breaking {
 		return breakingRelease(ctx, c, env, ri)
 	}
@@ -609,22 +612,37 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 }
 
 func breakingRelease(ctx context.Context, c *github.Client, env *Env, ri releaseInfo) Result {
-	title := "Warden: a breaking change waits for a major release " + ri.Version
+	return ownerRelease(ctx, c, env, "Warden: a breaking change waits for a major release "+ri.Version,
+		fmt.Sprintf("%s: merged since %s includes a breaking change, so the next release is %s. Warden never cuts a major release.\n\n%s\n",
+			ownerMention(env), or(ri.Tag, "the start"), ri.Version, prList(ri.Merged)),
+		fmt.Sprintf("a major version (%s) is the owner's", ri.Version))
+}
+
+// firstRelease: with no tag yet, the first version is the owner's to cut
+// (the CHANGELOG may already name it); from then on Warden cuts patch/minor.
+func firstRelease(ctx context.Context, c *github.Client, env *Env, ri releaseInfo) Result {
+	return ownerRelease(ctx, c, env, "Warden: the first release is yours",
+		fmt.Sprintf("%s: the repository has no release tag yet, so Warden won't pick the first version. Tag it on a green %s "+
+			"(for example `git tag v0.1.0 origin/%s && git push origin v0.1.0`; the release workflow builds it). "+
+			"From then on Warden cuts patch and minor releases from merged PRs.\n\n%s\n",
+			ownerMention(env), mainBranch(env), mainBranch(env), prList(ri.Merged)),
+		"the first release is the owner's")
+}
+
+func ownerRelease(ctx context.Context, c *github.Client, env *Env, title, body, why string) Result {
 	is, err := c.IssuesLabeled(ctx, labelNeedsHuman)
 	if err == nil {
 		for _, i := range is {
 			if i.Title == title {
-				return refused(fmt.Sprintf("release: a major version is the owner's (issue #%d)", i.Number))
+				return refused(fmt.Sprintf("release: %s (issue #%d)", why, i.Number))
 			}
 		}
 	}
-	body := fmt.Sprintf("%s: merged since %s includes a breaking change, so the next release is %s. Warden never cuts a major release.\n\n%s\n",
-		ownerMention(env), or(ri.Tag, "the start"), ri.Version, prList(ri.Merged))
 	i, err := c.CreateIssue(ctx, title, body, labelNeedsHuman)
 	if err != nil {
 		return Result{Summary: "release: " + err.Error()}
 	}
-	return refused(fmt.Sprintf("release: a major version (%s) is the owner's: issue #%d", ri.Version, i.Number))
+	return refused(fmt.Sprintf("release: %s: issue #%d", why, i.Number))
 }
 
 // Changelog: the [Unreleased] section becomes [version] - date, with the
