@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `merge-pr` now detects a 405 (merge conflict) from the GitHub merge endpoint, labels the PR `merge-conflict`,
+  and skips the merge (deferred) instead of logging a hard failure.
+
 ### Added
 
 - `foreach` on observe and inventory steps: run a step once per value of a list param

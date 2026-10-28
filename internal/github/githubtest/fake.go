@@ -27,6 +27,8 @@ type PR struct {
 	github.PR
 	Files []string
 	Diff  string
+	// MergeConflict: when true, the merge endpoint returns 405.
+	MergeConflict bool
 }
 
 // Review: a posted review.
@@ -344,6 +346,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			f.Reviews = append(f.Reviews, Review{N: n, SHA: str(in["commit_id"]), Event: str(in["event"]), Body: str(in["body"])})
 			js(map[string]any{"id": len(f.Reviews)})
 		case "merge":
+			if p.MergeConflict {
+				w.WriteHeader(405)
+				js(map[string]string{"message": "Merge conflict"})
+				return
+			}
 			if p.State != "open" || str(in["sha"]) != p.Head.SHA {
 				w.WriteHeader(409)
 				js(map[string]string{"message": "Head branch was modified"})

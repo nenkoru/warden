@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	labelNeedsHuman = "needs-human"
-	labelWarden     = "warden"
-	labelDelegated  = "delegated"
-	labelFixed      = "warden-fixed" // a draft that had its one fix round
-	refIssue        = "warden/issue-"
-	refRelease      = "warden/release-"
+	labelNeedsHuman    = "needs-human"
+	labelWarden        = "warden"
+	labelDelegated     = "delegated"
+	labelFixed         = "warden-fixed" // a draft that had its one fix round
+	labelMergeConflict = "merge-conflict"
+	refIssue           = "warden/issue-"
+	refRelease         = "warden/release-"
 )
 
 func observeGitHub(ctx context.Context, name string, env *Env) ([]domain.Finding, error) {
