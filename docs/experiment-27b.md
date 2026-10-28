@@ -8,14 +8,27 @@ Days and weeks are in Europe/Moscow.
 
 | week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | tool-call errors / call | reverted | top failures | idle hours |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-W44 (so far) | 1 | 0 | — | 1.0 | 0.0 | 7s | 0 / 0 | — | 0 | — | 0.2 |
+| 2026-W44 (so far) | 5 | 2 | 100% (2/2) | 2.0 | 0.0 | 45s | 9.3M / 11.8k | 0.04 (9/251) | 0 | loop 5, tool-call 4, wrong-edit 1 | 5.7 |
 
 ## Days
 
-### 2026-10-28 (so far)
+### 2026-10-28
 
 | task | PR | size | brain / model | attempts | steps | tool calls | tool-call errors | wall time | tokens in / out | CI first push | fix rounds | merged | reverted | review comments | failures |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | PR #12 | #12 | — | delegate | 1 | 0 | 0 | 0 | 7s | 0 / 0 | — | 0 | no | no | 0 | — |
+| PR #14 | #14 | — | delegate | 1 | 0 | 0 | 0 | 4s | 0 / 0 | — | 0 | no | no | 0 | — |
+| #16 | #19 | S | local / qwen3.8-27b-local | 1 | 18 | 22 | 1 | 4m 12s | 912.9k / 3.0k | green | 0 | yes | no | 0 | — |
+| #17 | #20 | S | local / qwen3.8-27b-local | 1 | 5 | 7 | 0 | 45s | 26.2k / 772 | green | 0 | yes | no | 0 | — |
+| #18 | — | S | local / qwen3.8-27b-local | 6 | 148 | 222 | 8 | 23m 50s | 8.3M / 8.0k | — | 0 | no | no | 0 | tool-call, wrong-edit, loop |
 
-Idle: 0.2 h (off-hours 0.2 h).
+Failures:
+
+- 08:55 #18 new: **tool-call, loop** — issue #18: the brain local failed (stopped after 25 steps (max_steps)); tried again next tick
+- 09:03 #18 new: **tool-call, loop** — issue #18: the brain local failed (stopped after 25 steps (max_steps)); tried again next tick
+- 09:14 #18 new: **loop** — issue #18: the brain local failed (stopped after 25 steps (max_steps)); tried again next tick
+- 09:24 #18 new: **tool-call, loop** — issue #18: the brain local failed (stopped after 25 steps (max_steps)); tried again next tick
+- 09:35 #18 new: **loop** — issue #18: the brain local failed (stopped after 25 steps (max_steps)); tried again next tick
+- 09:44 #18 new: **tool-call, wrong-edit** — issue #18: the brain (local) made no change
+
+Idle: 5.7 h (off-hours 5.7 h).
