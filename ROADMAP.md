@@ -1,10 +1,10 @@
 # Roadmap
 
-> Generated weekly by Warden; the owner edits freely; Warden rewrites it next week. (2026-W44, brain: local)
+> Generated weekly by Warden; the owner edits freely; Warden rewrites it next week. (2026-W44)
 
 ## Now
 - Fix the `merge-pr` act to detect 405 merge-conflict errors before attempting the API call (#5, #12)
-- Create `ROADMAP.md` with the current state (empty file on main) to give Warden a persistent planning surface
+- Create `ROADMAP.md` with the current state to give Warden a persistent planning surface
 - Triage and close duplicate digest issues #10 and #11
 
 ## Next
