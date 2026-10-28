@@ -385,6 +385,27 @@ func TestMergeRules(t *testing.T) {
 			t.Fatalf("%+v", r)
 		}
 	})
+	t.Run("405 merge conflict: labeled, skipped, not a failure", func(t *testing.T) {
+		w := newWorld(t)
+		n := w.fake.AddPR("fix: z", "warden-bot", "warden/issue-5-z", "own5", []string{"hello.go"}, "green")
+		w.fake.With(func(f *githubtest.Fake) { f.PRs[n].MergeConflict = true })
+		f := fixOf(w.observe("github-prs"), "merge-pr")
+		if f == nil {
+			t.Fatal("no merge-pr fix")
+		}
+		r := Act(context.Background(), "merge-pr", nil, *f, w.env)
+		if r.OK || r.Refused || !r.Deferred {
+			t.Fatalf("expected deferred (skip), got: %+v", r)
+		}
+		if merged(w, n) {
+			t.Fatal("PR was merged despite 405")
+		}
+		var labeled bool
+		w.fake.With(func(f *githubtest.Fake) { labeled = f.PRs[n].Has("merge-conflict") })
+		if !labeled {
+			t.Fatal("PR not labeled merge-conflict")
+		}
+	})
 }
 
 func TestPauseObserver(t *testing.T) {

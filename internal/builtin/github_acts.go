@@ -533,6 +533,11 @@ func mergePR(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	}
 	sha, err := c.Merge(ctx, n, pr.Head.SHA, fmt.Sprintf("%s (#%d)", pr.Title, n))
 	if err != nil {
+		var se *github.StatusError
+		if errors.As(err, &se) && se.Code == 405 {
+			_ = c.AddLabels(ctx, n, labelMergeConflict)
+			return deferred(fmt.Sprintf("PR #%d has merge conflicts: labeled merge-conflict, skipped", n))
+		}
 		return Result{Summary: "merge-pr: " + err.Error()}
 	}
 	return Result{OK: true, Summary: fmt.Sprintf("merged PR #%d (%s, squash) → %s", n, class, short7(sha))}
