@@ -38,6 +38,10 @@ func observeGitHub(ctx context.Context, name string, env *Env) ([]domain.Finding
 		return observeIssues(ctx, c, env)
 	case "github-prs":
 		return observePRs(ctx, c, env)
+	case "github-experiment":
+		return observeExperiment(ctx, c, env)
+	case "github-roadmap":
+		return observeRoadmap(ctx, c, env)
 	}
 	return observeMain(ctx, c, env)
 }
@@ -96,7 +100,7 @@ func observeIssues(ctx context.Context, c *github.Client, env *Env) ([]domain.Fi
 	}
 	skip := listParam(env, "skip_labels")
 	if len(skip) == 0 {
-		skip = []string{labelNeedsHuman, "wontfix", "question", "warden-pause", "warden-log", labelDelegated}
+		skip = []string{labelNeedsHuman, "wontfix", "question", "warden-pause", labelLog, labelDigest, labelDelegated}
 	}
 	work := listParam(env, "work_labels")
 	if len(work) == 0 {
@@ -117,6 +121,10 @@ func observeIssues(ctx context.Context, c *github.Client, env *Env) ([]domain.Fi
 		out = append(out, f)
 		fp := &out[len(out)-1]
 		if anyLabel(labels, skip) {
+			continue
+		}
+		if is.Has(labelRFC) && !is.Has(labelWarden) { // an RFC is worked only once accepted (rfc-accept, or the owner's warden label)
+			fp.Title += " — RFC: waiting for objections"
 			continue
 		}
 		if pr, ok := open[is.Number]; ok {
@@ -179,11 +187,14 @@ func anyLabel(have, want []string) bool {
 	return false
 }
 
-func nonEmptyList(s string) []string {
-	if s == "" {
-		return nil
+func nonEmptyList(ss ...string) []string {
+	var out []string
+	for _, s := range ss {
+		if s != "" {
+			out = append(out, s)
+		}
 	}
-	return []string{s}
+	return out
 }
 
 // ---- pull requests
@@ -318,6 +329,13 @@ func mainState(ctx context.Context, c *github.Client, env *Env) (sha, state stri
 	if err != nil {
 		return sha, "", nil, err
 	}
+	state, red = runsState(runs, sha)
+	return sha, state, red, nil
+}
+
+// runsState: CI on sha from a branch's workflow runs (the latest run of each
+// workflow; pull_request runs don't count) and the red ones.
+func runsState(runs []github.WorkflowRun, sha string) (state string, red []github.WorkflowRun) {
 	latest := map[string]github.WorkflowRun{}
 	for _, r := range runs {
 		if r.HeadSHA != sha || r.Event == "pull_request" {
@@ -351,7 +369,7 @@ func mainState(ctx context.Context, c *github.Client, env *Env) (sha, state stri
 	case pending:
 		state = "pending"
 	}
-	return sha, state, red, nil
+	return state, red
 }
 
 var reVersionTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -376,6 +394,11 @@ type releaseInfo struct {
 	Untagged *github.PR // a merged release PR whose tag does not exist yet
 	Version  string     // the next version
 	Breaking bool
+	// with the canary gate (params.canary; github_canary.go), for Untagged:
+	RC     string      // the rc tag on its merge commit ("" = none yet)
+	NextRC string      // the rc tag to cut there
+	Canary canaryInfo  // RC on the canary
+	Fresh  []github.PR // merged after it (what a new attempt waits for)
 }
 
 func releaseState(ctx context.Context, c *github.Client, env *Env) (releaseInfo, error) {
@@ -404,12 +427,12 @@ func releaseState(ctx context.Context, c *github.Client, env *Env) (releaseInfo,
 			continue
 		}
 		if v, ok := strings.CutPrefix(p.Head.Ref, refRelease); ok {
-			if !have[v] && reVersionTag.MatchString(v) && (ri.Tag == "" || semverLess(ri.Tag, v)) {
-				ri.Untagged = &closed[i]
+			if !have[v] && reVersionTag.MatchString(v) && (ri.Tag == "" || semverLess(ri.Tag, v)) && (ri.Untagged == nil || ri.Untagged.MergedAt.Before(*p.MergedAt)) {
+				ri.Untagged = &closed[i] // the latest attempt (a failed rc is followed by a new release PR)
 			}
 			continue
 		}
-		if p.MergedAt.After(since) {
+		if p.MergedAt.After(since) && !strings.HasPrefix(p.Head.Ref, refExperiment) { // the daily experiment log is no reason to release
 			ri.Merged = append(ri.Merged, p)
 		}
 	}
@@ -424,7 +447,21 @@ func releaseState(ctx context.Context, c *github.Client, env *Env) (releaseInfo,
 		}
 	}
 	ri.Version, ri.Breaking = nextVersion(ri.Tag, ri.Merged)
-	return ri, nil
+	if canaryName(env) == "" || ri.Untagged == nil {
+		return ri, nil
+	}
+	// rc tags are not releases (latestTag skips them); one in flight holds
+	// the next release PR until it fails on the canary
+	ri.RC, ri.NextRC = rcOf(tags, strings.TrimPrefix(ri.Untagged.Head.Ref, refRelease), ri.Untagged.MergeCommitSHA)
+	for _, p := range ri.Merged {
+		if p.MergedAt.After(*ri.Untagged.MergedAt) {
+			ri.Fresh = append(ri.Fresh, p)
+		}
+	}
+	if ri.RC != "" {
+		ri.Canary, err = canaryState(ctx, c, env, ri.RC, ri.Untagged.MergeCommitSHA)
+	}
+	return ri, err
 }
 
 var (
@@ -474,7 +511,22 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 			"No release while main is red.")
 		f.Links = links
 		f.Data = map[string]string{"sha": sha}
+		if pr, err := revertable(ctx, c, env, sha, red); err != nil {
+			f.Detail += " Whether to revert could not be checked: " + c.Redact(err.Error())
+		} else if pr != nil {
+			f.Detail += fmt.Sprintf(" Warden merged PR #%d as this commit and main was green before it: it reverts it.", pr.Number)
+			f.Fix = &domain.Fix{Act: "revert-pr", Target: "#" + strconv.Itoa(pr.Number), What: fmt.Sprintf("revert PR #%d (main went red after Warden merged it)", pr.Number),
+				Params: map[string]string{"pr": strconv.Itoa(pr.Number), "sha": sha, "tainted": "false"}}
+		}
 		out = append(out, f)
+	}
+	notePublished(ctx, c, env)
+	if experimentOn(env) {
+		rs, err := observeReverts(ctx, c, env)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, rs...)
 	}
 	if param(nil, env, "release", "auto") == "off" {
 		return out, nil
@@ -484,6 +536,8 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 		return out, err
 	}
 	switch {
+	case ri.Untagged != nil && canaryName(env) != "":
+		out = append(out, canaryFindings(env, ri, state)...)
 	case ri.Untagged != nil:
 		v := strings.TrimPrefix(ri.Untagged.Head.Ref, refRelease)
 		f := ghFinding("github-main", "release-tag|"+v, "release", "medium", v, fmt.Sprintf("release %s merged (PR #%d): tag it", v, ri.Untagged.Number), "")
@@ -495,25 +549,10 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 		}
 		out = append(out, f)
 	case len(ri.Merged) > 0:
-		title := fmt.Sprintf("%d merged PR(s) since %s, unreleased → %s", len(ri.Merged), or(ri.Tag, "the start"), ri.Version)
-		f := ghFinding("github-main", "release|"+ri.Version, "release", "medium", ri.Version, title, prList(ri.Merged))
-		switch {
-		case ri.Open != nil:
-			f.Severity, f.Title = "info", title+fmt.Sprintf(" — release PR #%d open", ri.Open.Number)
-		case state != "green":
-			f.Severity, f.Title = "low", title+" — waiting for green main ("+state+")"
-		case ri.Tag == "":
-			f.Title = fmt.Sprintf("%d merged PR(s), no release tag yet: the first release is yours", len(ri.Merged))
-			f.Fix = &domain.Fix{Act: "release", Target: "first", What: "ask the owner to cut the first release (an issue labeled needs-human)",
-				Params: map[string]string{"phase": "pr", "version": ri.Version, "first": "true", "tainted": "false"}}
-		default:
-			f.Fix = &domain.Fix{Act: "release", Target: ri.Version, What: "open the release PR for " + ri.Version + " (CHANGELOG from the merged PR titles)",
-				Params: map[string]string{"phase": "pr", "version": ri.Version, "breaking": strconv.FormatBool(ri.Breaking), "tainted": "false"}}
-		}
-		out = append(out, f)
+		out = append(out, releasePRFinding(ri, state, ri.Merged, or(ri.Tag, "the start"), ""))
 	}
-	if ri.Tag != "" {
-		runs, err := c.Runs(ctx, ri.Tag)
+	for _, tag := range nonEmptyList(ri.Tag, ri.RC) {
+		runs, err := c.Runs(ctx, tag)
 		if err != nil {
 			return out, err
 		}
@@ -521,16 +560,55 @@ func observeMain(ctx context.Context, c *github.Client, env *Env) ([]domain.Find
 			r := runs[0]
 			switch {
 			case r.Status == "completed" && r.Conclusion != "success" && r.Conclusion != "skipped":
-				f := ghFinding("github-main", fmt.Sprintf("release-failed|%s|%d", ri.Tag, r.ID), "release", "critical", ri.Tag,
-					fmt.Sprintf("release %s failed: %s (%s)", ri.Tag, r.Name, r.Conclusion), "The tag exists; the release workflow did not finish. Look at the run and re-run it or fix forward.")
+				f := ghFinding("github-main", fmt.Sprintf("release-failed|%s|%d", tag, r.ID), "release", "critical", tag,
+					fmt.Sprintf("release %s failed: %s (%s)", tag, r.Name, r.Conclusion), "The tag exists; the release workflow did not finish. Look at the run and re-run it or fix forward.")
 				f.Links = nonEmptyList(r.HTMLURL)
 				out = append(out, f)
 			case r.Status != "completed":
-				out = append(out, ghFinding("github-main", "release-running|"+ri.Tag, "release", "info", ri.Tag, "release "+ri.Tag+": the workflow is running", ""))
+				out = append(out, ghFinding("github-main", "release-running|"+tag, "release", "info", tag, "release "+tag+": the workflow is running", ""))
 			}
 		}
 	}
 	return out, nil
+}
+
+// notePublished: a release published in the last two weeks (from Warden's
+// tag or the owner's) gets its notes on the digest issue, once (best effort:
+// a notification, not a finding).
+func notePublished(ctx context.Context, c *github.Client, env *Env) {
+	r, err := c.LatestRelease(ctx)
+	if err != nil || r.Draft || r.PublishedAt == nil || env.now().Sub(*r.PublishedAt) > 14*24*time.Hour || !reVersionTag.MatchString(r.TagName) {
+		return
+	}
+	_, _ = releaseNote(ctx, c, env, r.TagName, r.TagName, "is released", r.CreatedAt.Add(-24*time.Hour))
+}
+
+// releasePRFinding: merged PRs waiting for a release PR (after names a
+// failed rc the new attempt follows: its own key, so it is not "done").
+func releasePRFinding(ri releaseInfo, state string, merged []github.PR, since, after string) domain.Finding {
+	title := fmt.Sprintf("%d merged PR(s) since %s, unreleased → %s", len(merged), since, ri.Version)
+	key := "release|" + ri.Version
+	if after != "" {
+		key += "|after|" + after
+	}
+	f := ghFinding("github-main", key, "release", "medium", ri.Version, title, prList(merged))
+	switch {
+	case ri.Open != nil:
+		f.Severity, f.Title = "info", title+fmt.Sprintf(" — release PR #%d open", ri.Open.Number)
+	case state != "green":
+		f.Severity, f.Title = "low", title+" — waiting for green main ("+state+")"
+	case ri.Tag == "":
+		f.Title = fmt.Sprintf("%d merged PR(s), no release tag yet: the first release is yours", len(merged))
+		f.Fix = &domain.Fix{Act: "release", Target: "first", What: "ask the owner to cut the first release (an issue labeled needs-human)",
+			Params: map[string]string{"phase": "pr", "version": ri.Version, "first": "true", "tainted": "false"}}
+	default:
+		f.Fix = &domain.Fix{Act: "release", Target: ri.Version, What: "open the release PR for " + ri.Version + " (CHANGELOG from the merged PR titles)",
+			Params: map[string]string{"phase": "pr", "version": ri.Version, "breaking": strconv.FormatBool(ri.Breaking), "tainted": "false"}}
+		if after != "" {
+			f.Fix.Params["after"] = after
+		}
+	}
+	return f
 }
 
 func prList(ps []github.PR) string {

@@ -31,6 +31,7 @@ type Client struct {
 	HTTP *http.Client
 
 	token string
+	anon  bool // no token: reads only
 	mu    sync.Mutex
 	login string
 }
@@ -68,6 +69,19 @@ func New(base, repo, tokenFile string) (*Client, error) {
 		base = "https://api.github.com"
 	}
 	return &Client{Base: strings.TrimRight(base, "/"), Repo: repo, HTTP: &http.Client{Timeout: 60 * time.Second}, token: tok}, nil
+}
+
+// Anonymous: a client without a token, for public reads (releases,
+// attestations, labeled issues; 60 requests an hour per address). The guard
+// refuses every write.
+func Anonymous(base, repo string) (*Client, error) {
+	if !validRepo(repo) {
+		return nil, fmt.Errorf("github: repo must be owner/name, not %q", repo)
+	}
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	return &Client{Base: strings.TrimRight(base, "/"), Repo: repo, HTTP: &http.Client{Timeout: 60 * time.Second}, anon: true}, nil
 }
 
 func validRepo(r string) bool {
@@ -113,6 +127,11 @@ func (c *Client) raw(ctx context.Context, path, accept string) (string, error) {
 }
 
 func (c *Client) send(ctx context.Context, method, path, accept string, body, out any) error {
+	return c.sendMax(ctx, method, path, accept, body, out, 16<<20)
+}
+
+// sendMax: send with a cap on the answer's size (a larger answer is an error).
+func (c *Client) sendMax(ctx context.Context, method, path, accept string, body, out any, max int64) error {
 	if why := c.Guard(method, path, body); why != "" {
 		return fmt.Errorf("github %s %s: refused by Warden's guard: %s", method, path, why)
 	}
@@ -128,7 +147,9 @@ func (c *Client) send(ctx context.Context, method, path, accept string, body, ou
 	if err != nil {
 		return fmt.Errorf("github %s %s: %w", method, path, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", version.UserAgent())
@@ -144,9 +165,12 @@ func (c *Client) send(ctx context.Context, method, path, accept string, body, ou
 		return fmt.Errorf("github %s %s: %s", method, path, c.Redact(err.Error()))
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	if err != nil {
 		return fmt.Errorf("github %s %s: %w", method, path, err)
+	}
+	if int64(len(b)) > max {
+		return fmt.Errorf("github %s %s: the answer is larger than %d bytes", method, path, max)
 	}
 	if resp.StatusCode == 404 {
 		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
@@ -238,6 +262,7 @@ type PR struct {
 	Merged            bool       `json:"merged"`
 	MergedAt          *time.Time `json:"merged_at"`
 	MergeCommitSHA    string     `json:"merge_commit_sha"`
+	MergedBy          *User      `json:"merged_by"` // only in a single PR's GET, not in lists
 }
 
 func (p PR) Has(label string) bool { return hasLabel(p.Labels, label) }
@@ -264,6 +289,8 @@ type File struct {
 	Filename         string `json:"filename"`
 	PreviousFilename string `json:"previous_filename"`
 	Status           string `json:"status"`
+	Additions        int    `json:"additions"`
+	Deletions        int    `json:"deletions"`
 }
 
 type CheckRun struct {
@@ -293,9 +320,39 @@ type Tag struct {
 }
 
 type Comment struct {
+	ID                int64     `json:"id"`
+	Body              string    `json:"body"`
+	User              User      `json:"user"`
+	AuthorAssociation string    `json:"author_association"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"` // the last edit (or creation)
+}
+
+// Release: a GitHub release and its assets (CreatedAt is the date of its
+// commit, PublishedAt nil for a draft).
+type Release struct {
+	ID          int64      `json:"id"`
+	TagName     string     `json:"tag_name"`
+	Name        string     `json:"name"`
+	Draft       bool       `json:"draft"`
+	Prerelease  bool       `json:"prerelease"`
+	HTMLURL     string     `json:"html_url"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at"`
+	Assets      []Asset    `json:"assets"`
+}
+
+type Asset struct {
 	ID   int64  `json:"id"`
-	Body string `json:"body"`
-	User User   `json:"user"`
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// Attestation: one stored attestation — a Sigstore bundle, inline or behind
+// bundle_url (snappy-compressed).
+type Attestation struct {
+	Bundle    json.RawMessage `json:"bundle"`
+	BundleURL string          `json:"bundle_url"`
 }
 
 // ---- calls
@@ -440,6 +497,23 @@ func (c *Client) CommitDate(ctx context.Context, sha string) (time.Time, error) 
 	return r.Commit.Committer.Date, err
 }
 
+// Parents: a commit's parent commits.
+func (c *Client) Parents(ctx context.Context, sha string) ([]string, error) {
+	var r struct {
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	if err := c.do(ctx, "GET", c.repoPath("/commits/%s", url.PathEscape(sha)), nil, &r); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(r.Parents))
+	for _, p := range r.Parents {
+		out = append(out, p.SHA)
+	}
+	return out, nil
+}
+
 // FileExists: whether path exists at ref (the contents API).
 func (c *Client) FileExists(ctx context.Context, path, ref string) (bool, error) {
 	err := c.do(ctx, "GET", c.repoPath("/contents/%s?ref=%s", path, url.QueryEscape(ref)), nil, nil)
@@ -449,6 +523,18 @@ func (c *Client) FileExists(ctx context.Context, path, ref string) (bool, error)
 	return err == nil, err
 }
 
+// FileContent: a file's text at ref (the contents API, raw; redacted).
+func (c *Client) FileContent(ctx context.Context, path, ref string) (string, error) {
+	return c.raw(ctx, c.repoPath("/contents/%s?ref=%s", path, url.QueryEscape(ref)), "application/vnd.github.raw+json")
+}
+
+// LatestRelease: the newest published, non-prerelease release (ErrNotFound
+// when there is none).
+func (c *Client) LatestRelease(ctx context.Context) (Release, error) {
+	var r Release
+	return r, c.do(ctx, "GET", c.repoPath("/releases/latest"), nil, &r)
+}
+
 func (c *Client) Comment(ctx context.Context, n int, body string) error {
 	return c.do(ctx, "POST", c.repoPath("/issues/%d/comments", n), map[string]string{"body": c.Redact(body)}, nil)
 }
@@ -456,6 +542,50 @@ func (c *Client) Comment(ctx context.Context, n int, body string) error {
 func (c *Client) Comments(ctx context.Context, n int) ([]Comment, error) {
 	var cs []Comment
 	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?per_page=100", n), nil, &cs)
+}
+
+// CommentsSince: an issue's comments updated at or after since (the list
+// is oldest first, so a long-lived issue is read from a recent point).
+func (c *Client) CommentsSince(ctx context.Context, n int, since time.Time) ([]Comment, error) {
+	var cs []Comment
+	return cs, c.do(ctx, "GET", c.repoPath("/issues/%d/comments?since=%s&per_page=100", n, url.QueryEscape(since.UTC().Format(time.RFC3339))), nil, &cs)
+}
+
+// PRReview: a review on a pull request.
+type PRReview struct {
+	ID    int64  `json:"id"`
+	User  User   `json:"user"`
+	State string `json:"state"`
+	Body  string `json:"body"`
+}
+
+// Reviews: a pull request's reviews.
+func (c *Client) Reviews(ctx context.Context, n int) ([]PRReview, error) {
+	var rs []PRReview
+	return rs, c.do(ctx, "GET", c.repoPath("/pulls/%d/reviews?per_page=100", n), nil, &rs)
+}
+
+// CommentByID: one issue comment.
+func (c *Client) CommentByID(ctx context.Context, id int64) (Comment, error) {
+	var cm Comment
+	return cm, c.do(ctx, "GET", c.repoPath("/issues/comments/%d", id), nil, &cm)
+}
+
+// EditComment rewrites a comment — only one the token's user wrote: the
+// author is checked first (the guard allows the path, not the author).
+func (c *Client) EditComment(ctx context.Context, id int64, body string) error {
+	me, err := c.Login(ctx)
+	if err != nil {
+		return err
+	}
+	cm, err := c.CommentByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(cm.User.Login, me) {
+		return fmt.Errorf("github: comment %d is @%s's, not this token's (@%s): not editing it", id, cm.User.Login, me)
+	}
+	return c.do(ctx, "PATCH", c.repoPath("/issues/comments/%d", id), map[string]string{"body": c.Redact(body)}, nil)
 }
 
 func (c *Client) AddLabels(ctx context.Context, n int, labels ...string) error {
@@ -468,20 +598,7 @@ func (c *Client) Review(ctx context.Context, n int, sha, body string) error {
 	return c.do(ctx, "POST", c.repoPath("/pulls/%d/reviews", n), map[string]string{"commit_id": sha, "body": c.Redact(body), "event": "COMMENT"}, nil)
 }
 
-// Merge squash-merges a PR whose head is still sha.
-func (c *Client) Merge(ctx context.Context, n int, sha, title string) (string, error) {
-	var r struct {
-		SHA    string `json:"sha"`
-		Merged bool   `json:"merged"`
-	}
-	if err := c.do(ctx, "PUT", c.repoPath("/pulls/%d/merge", n), map[string]string{"sha": sha, "merge_method": "squash", "commit_title": title}, &r); err != nil {
-		return "", err
-	}
-	if !r.Merged {
-		return "", fmt.Errorf("github: PR #%d was not merged", n)
-	}
-	return r.SHA, nil
-}
+// Merge: see kernel.go (the merge re-checks the kernel there).
 
 func (c *Client) CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) {
 	var p PR
@@ -595,6 +712,26 @@ func (c *Client) FailedLogs(ctx context.Context, sha string, max int) (string, e
 	return b.String(), nil
 }
 
+// FailedJobs: the names of a workflow run's failed (or timed-out) jobs.
+func (c *Client) FailedJobs(ctx context.Context, runID int64) ([]string, error) {
+	var jobs struct {
+		Jobs []struct {
+			Name       string `json:"name"`
+			Conclusion string `json:"conclusion"`
+		} `json:"jobs"`
+	}
+	if err := c.do(ctx, "GET", c.repoPath("/actions/runs/%d/jobs?per_page=100", runID), nil, &jobs); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, j := range jobs.Jobs {
+		if j.Conclusion == "failure" || j.Conclusion == "timed_out" {
+			out = append(out, j.Name)
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) CreateIssue(ctx context.Context, title, body string, labels ...string) (Issue, error) {
 	var i Issue
 	return i, c.do(ctx, "POST", c.repoPath("/issues"), map[string]any{"title": title, "body": c.Redact(body), "labels": labels}, &i)
@@ -609,6 +746,27 @@ func (c *Client) CreateTag(ctx context.Context, name, sha string) error {
 func (c *Client) Pin(ctx context.Context, nodeID string) error {
 	q := map[string]any{"query": "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }", "variables": map[string]string{"id": nodeID}}
 	return c.do(ctx, "POST", "/graphql", q, nil)
+}
+
+// Releases: the newest releases (drafts only with a token that may see them).
+func (c *Client) Releases(ctx context.Context) ([]Release, error) {
+	var rs []Release
+	return rs, c.do(ctx, "GET", c.repoPath("/releases?per_page=30"), nil, &rs)
+}
+
+// AssetBytes downloads a release asset through the API (the redirect to the
+// storage host carries no token: Go drops it on a host change), at most max bytes.
+func (c *Client) AssetBytes(ctx context.Context, id, max int64) ([]byte, error) {
+	var b []byte
+	return b, c.sendMax(ctx, "GET", c.repoPath("/releases/assets/%d", id), "application/octet-stream", nil, &b, max)
+}
+
+// Attestations: the attestations stored for a subject digest ("sha256:hex").
+func (c *Client) Attestations(ctx context.Context, digest string) ([]Attestation, error) {
+	var r struct {
+		Attestations []Attestation `json:"attestations"`
+	}
+	return r.Attestations, c.do(ctx, "GET", c.repoPath("/attestations/%s?per_page=30", url.PathEscape(digest)), nil, &r)
 }
 
 // Number parses an issue/PR number.

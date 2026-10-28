@@ -13,6 +13,7 @@ import (
 	"github.com/nenkoru/warden/internal/builtin"
 	"github.com/nenkoru/warden/internal/domain"
 	"github.com/nenkoru/warden/internal/policy"
+	"github.com/nenkoru/warden/internal/version"
 )
 
 // Item: one finding through the loop.
@@ -40,6 +41,9 @@ type Tick struct {
 	Fresh      int    // new things worth a ping
 	Summary    string
 	Held       string // the ping was held back (the backoff, in words)
+	// Restart: the binary was replaced (an update or a rollback): a long-lived
+	// process (listen, serve) exits after this tick so its supervisor starts it.
+	Restart bool
 }
 
 // urgent: something that never waits for the backoff.
@@ -74,6 +78,7 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 	mode := map[bool]string{true: "dry-run", false: "act"}[in.DryRun]
 	in.St.Journal("tick.begin", map[string]any{"tick": t.ID, "domain": in.Dom.Name, "mode": mode, "sandbox": in.Runner})
 	in.fire(ctx, "Wake", in.Cfg.Name, map[string]any{"name": in.Cfg.Name, "domain": in.Dom.Name, "mode": mode})
+	in.idleTick(now)
 	_, in.quiet = in.mayPing(now, false)
 	in.mu.Lock()
 	in.scores = nil // the owner may have labeled since the last tick
@@ -95,7 +100,8 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 	orders := in.readSignals(ctx, t, inv)
 	in.preOrders(ctx, orders, comps, inv, t)
 
-	findings := append(pauseItems, in.observe(ctx, t)...)
+	findings := append(pauseItems, in.updateBegin(ctx, t)...) // before observe: a rollback is in this tick's report
+	findings = append(findings, in.observe(ctx, t)...)
 	findings = append(findings, in.feeds(ctx, comps, inv, t)...)
 	findings = append(findings, in.health(ctx, t)...)
 	triage := in.Triage.Triage()
@@ -107,6 +113,7 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 		if s == nil {
 			s = &Seen{First: now.Unix(), Title: f.Title}
 			in.St.Seen[f.ID] = s
+			in.taskEvent(f) // a task event an observer saw (a revert): recorded once
 		}
 		s.Last, s.Title = now.Unix(), f.Title
 		it.New = s.Reported == 0
@@ -150,8 +157,10 @@ func (in *Instance) Tick(ctx context.Context) (*Tick, error) {
 		}
 	}
 	if err := in.St.Save(); err != nil {
+		in.updateEnd(ctx, t, false)
 		return t, err
 	}
+	in.updateEnd(ctx, t, true) // a healthy end: an install in flight is confirmed, a verified one installed
 	in.St.Journal("tick.end", map[string]any{"tick": t.ID, "findings": len(t.Items), "report": t.Report, "fresh": t.Fresh})
 	return t, nil
 }
@@ -597,8 +606,10 @@ func (in *Instance) act(ctx context.Context, it *Item, step domain.Step, key, id
 		return
 	}
 	in.St.Journal("action.begin", map[string]any{"key": key, "act": step.Name})
+	start, before := time.Now(), in.usageTotal()
 	r := in.run(ctx, it.Finding, step)
 	in.St.Journal("action.end", map[string]any{"key": key, "ok": r.OK, "summary": r.Summary})
+	in.recordTask(step.Name, key, r, time.Since(start), before)
 	if r.Deferred { // nothing happened: proposed again next tick, nothing remembered
 		it.Why += "; " + r.Summary
 		in.noteOnce(step.Name + ": " + r.Summary)
@@ -627,7 +638,7 @@ func (in *Instance) run(ctx context.Context, f domain.Finding, step domain.Step)
 	case step.Run.Builtin != "":
 		with := domain.ExpandArgs(step.Run.With, params)
 		br := builtin.Act(ctx, step.Run.Builtin, with, f, in.env(with))
-		r.OK, r.Summary, r.Branch, r.File, r.Log, r.Refused, r.Deferred = br.OK, br.Summary, br.Branch, br.File, br.Log, br.Refused, br.Deferred
+		r.OK, r.Summary, r.Branch, r.File, r.Log, r.Refused, r.Deferred, r.Data = br.OK, br.Summary, br.Branch, br.File, br.Log, br.Refused, br.Deferred, br.Data
 		return r
 	case len(step.Run.Cmd) > 0:
 		argv := domain.Expand(step.Run.Cmd, params)
@@ -671,7 +682,7 @@ func askPayload(in *Instance, it *Item) map[string]any {
 		what = it.Fix.What
 	}
 	return map[string]any{"id": it.Pending, "title": it.Title, "what": what, "why": strings.Join(it.Reasons, "; "),
-		"approve": "warden approve " + it.Pending, "decline": "warden decline " + it.Pending, "name": in.Cfg.Name}
+		"approve": "warden approve " + it.Pending, "decline": "warden decline " + it.Pending, "name": in.Cfg.Name, "version": version.Version}
 }
 
 func or(xs ...string) string {

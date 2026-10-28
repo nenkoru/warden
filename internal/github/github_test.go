@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nenkoru/warden/internal/github"
 	"github.com/nenkoru/warden/internal/github/githubtest"
@@ -80,5 +81,24 @@ func TestClientAgainstFake(t *testing.T) {
 	}
 	if ok, err := c.FileExists(ctx, "PAUSE", "main"); ok || err != nil {
 		t.Fatal(ok, err)
+	}
+	if _, err := c.LatestRelease(ctx); !errors.Is(err, github.ErrNotFound) {
+		t.Fatalf("no release yet: %v", err)
+	}
+	f.With(func(f *githubtest.Fake) {
+		f.Releases = append(f.Releases, github.Release{TagName: "v0.2.0"}, github.Release{TagName: "v0.3.0-rc.1", Prerelease: true})
+		f.Contents["v0.2.0:CHANGELOG.md"] = "# Changelog\n"
+	})
+	if r, err := c.LatestRelease(ctx); err != nil || r.TagName != "v0.2.0" {
+		t.Fatal(r, err)
+	}
+	if s, err := c.FileContent(ctx, "CHANGELOG.md", "v0.2.0"); err != nil || s != "# Changelog\n" {
+		t.Fatalf("%q %v", s, err)
+	}
+	if _, err := c.FileContent(ctx, "CHANGELOG.md", "nope"); !errors.Is(err, github.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if cs, err := c.CommentsSince(ctx, n, time.Now().Add(-time.Hour)); err != nil || len(cs) != 1 || cs[0].User.Login != "warden-bot" {
+		t.Fatal(cs, err)
 	}
 }

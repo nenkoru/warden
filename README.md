@@ -47,6 +47,7 @@ warden tick    --config ~/src/myproj.warden.toml   # one pass; the report is in 
 warden status  --config ~/src/myproj.warden.toml   # what waits for you
 warden approve a_1b2c3d4e --config ~/src/myproj.warden.toml
 warden units   --config ~/src/myproj.warden.toml   # writes launchd/systemd units; you load them (see INSTALL.md)
+warden update  --check --config ~/src/myproj.warden.toml   # a newer verified release? ([update]: docs/usecases/self-update.md)
 ```
 
 When the dry-run reports look right, set `mode = "act"` and rules such as
@@ -56,7 +57,7 @@ one decline pins it to ask.
 A report looks like this (from `scripts/demo-go-project.sh`, real OSV and Go proxy, no model):
 
 ```markdown
-# Warden «greet» · 2026-10-27 19:22
+# Warden «greet» · 2026-10-27 19:22 · warden 0.2.0
 
 Domain: **go-project** (`$DEMO/greet`) · mode: **act** · triage v1 · sandbox: sandbox-exec
 
@@ -80,7 +81,7 @@ Domain: **go-project** (`$DEMO/greet`) · mode: **act** · triage v1 · sandbox:
 | `k8s-namespace` | Warning events and CrashLoopBackOff become incidents, images become inventory, a fix is a proposal file. `kubectl apply` only with the `k8s.apply` grant, always asked. | [k8s-namespace](docs/usecases/k8s-namespace.md) |
 | `macos` | Disk, regenerable caches (cleaned only by the tool's own command, only from your list, with the `mac.clean` grant), battery and thermals, Homebrew as inventory. Starts in dry-run. | [macos](docs/usecases/macos.md) |
 | `linux-server` | Read-only: disk, failed systemd units, journal errors, dpkg packages as inventory, CISA advisories. Every fix is a proposal. | [linux-server](docs/usecases/linux-server.md) |
-| `github-repo` | Maintains one GitHub repository: works issues into draft PRs (CI decides; one fix round from the logs), reviews outside PRs with one comment (never merges them, never runs their code), merges its own, Dependabot's and trusted agents' PRs on green CI, cuts patch/minor releases with a generated CHANGELOG. Kill switch (`warden-pause` label or `PAUSE` file), protected paths → `needs-human`, untrusted text never drives a merge or release, a daily model budget, several brains routed per task, delegation to other agents. | [github-maintainer](docs/usecases/github-maintainer.md) |
+| `github-repo` | Maintains one GitHub repository: works issues into draft PRs (CI decides; one fix round from the logs), reviews outside PRs with one comment (never merges them, never runs their code), merges its own, Dependabot's and trusted agents' PRs on green CI, cuts patch/minor releases with a generated CHANGELOG (through a canary instance if you run a fleet), reverts its own merge when it turns `main` red, publishes a daily log of its coding model's tasks, writes a weekly roadmap, and reports to a pinned digest issue GitHub emails you about. Kill switch (`warden-pause` label or `PAUSE` file), a human-only kernel and protected paths → `needs-human` (never merged by Warden), untrusted text never drives a merge or release, a daily model budget, several brains routed per task, delegation to other agents. | [github-maintainer](docs/usecases/github-maintainer.md) |
 | `linux-host` | A GPU/model-serving host: disk, failed units (system and user), GPU temperature and ECC, the health of the service it exists for, with quiet hours. Read-only. | [linux-server](docs/usecases/linux-server.md#linux-host) |
 
 Also: [signals — news, alerts and messages](docs/usecases/signals.md) and

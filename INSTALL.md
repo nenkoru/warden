@@ -63,6 +63,13 @@ Notes:
 - **Sandbox fails closed.** Without `bwrap`, the read-only pack still observes and reports, but anything that would
   execute an act is refused until `sandbox = "none"` is set explicitly.
 
+## Updates (optional)
+
+An `[update]` section lets an installed Warden update itself from verified releases (checksum and Sigstore build
+provenance; the previous binary kept and restored when the new one does not finish a tick healthy). Keep the binary a
+plain file the service's user can write (`~/.warden/bin/warden` above). See
+[docs/usecases/self-update.md](docs/usecases/self-update.md).
+
 ## Talking to other agents (optional, nothing is wired by default)
 
 - **An agent harness reads Warden:** add `~/.warden/bin/warden mcp --config ~/.warden/mac/warden.toml` as an MCP

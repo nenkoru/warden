@@ -76,8 +76,8 @@ func (r TriageRule) matches(f domain.Finding) bool {
 }
 
 // Decide: the disposition and why. Below the rules is a floor in code: a
-// high/critical vulnerability, low disk and a failing check are always
-// reported; a high incident is never ignored.
+// high/critical vulnerability, low disk, a failing check and a rollback of
+// Warden itself are always reported; a high incident is never ignored.
 func (t Triage) Decide(f domain.Finding) (Disposition, string) {
 	d, why := Digest, "default"
 	for i, r := range t.Rules {
@@ -90,9 +90,9 @@ func (t Triage) Decide(f domain.Finding) (Disposition, string) {
 		}
 	}
 	switch {
-	case (f.Kind == "vuln" && sevAtLeast(f.Severity, "high")) || f.Kind == "low_disk" || f.Kind == "check":
+	case (f.Kind == "vuln" && sevAtLeast(f.Severity, "high")) || f.Kind == "low_disk" || f.Kind == "check" || f.Kind == "rollback":
 		if d != Report {
-			d, why = Report, "floor: always told (high vulnerability / low disk / failing check)"
+			d, why = Report, "floor: always told (high vulnerability / low disk / failing check / rollback)"
 		}
 	case f.Kind == "incident" && sevAtLeast(f.Severity, "high") && d == Ignore:
 		d, why = Digest, "floor: a severe incident is never hidden"

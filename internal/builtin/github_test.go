@@ -48,6 +48,9 @@ func newWorld(t *testing.T) *ghWorld {
 		t.Skip("git")
 	}
 	dir := t.TempDir()
+	recheck := digestRecheck
+	digestRecheck = 0
+	t.Cleanup(func() { digestRecheck = recheck })
 	w := &ghWorld{t: t, fake: githubtest.New(t, secret, "warden-bot", "acme/proj"), bare: filepath.Join(dir, "remote.git"), root: filepath.Join(dir, "clone")}
 	w.token = filepath.Join(dir, "token")
 	if err := os.WriteFile(w.token, []byte(secret+"\n"), 0o600); err != nil {
@@ -146,11 +149,25 @@ type coderBrain struct {
 	fn    func(task string, tools []brain.Tool) string
 }
 
-func (b *coderBrain) Do(_ context.Context, system, task string, tools []brain.Tool) (string, error) {
+// Do: one turn; the tool calls fn makes are counted as an endpoint would.
+func (b *coderBrain) Do(ctx context.Context, system, task string, tools []brain.Tool) (string, error) {
 	b.calls++
 	b.sys = system
 	b.tasks = append(b.tasks, task)
-	return b.fn(task, tools), nil
+	st := brain.StatsFrom(ctx)
+	st.Step(int64(len(system)+len(task)) / 4)
+	counted := make([]brain.Tool, len(tools))
+	for i, t := range tools {
+		run := t.Run
+		t.Run = func(ctx context.Context, args map[string]any) (string, bool) {
+			out, ok := run(ctx, args)
+			raw, _ := json.Marshal(args)
+			st.Call(t.Name, string(raw), map[bool]brain.CallOutcome{true: brain.CallOK, false: brain.CallFailed}[ok])
+			return out, ok
+		}
+		counted[i] = t
+	}
+	return b.fn(task, counted), nil
 }
 
 func use(tools []brain.Tool, name string, args map[string]any) string {
@@ -482,7 +499,7 @@ func TestReleaseFlow(t *testing.T) {
 		t.Fatalf("tag: %+v", r)
 	}
 	w.fake.With(func(f *githubtest.Fake) {
-		if f.Refs["refs/tags/v0.2.0"] != "m"+itoa(rel) {
+		if f.Refs["refs/tags/v0.2.0"] != "m"+itoa(rel) || len(f.Refs) != 1 { // without params.canary: no release candidate
 			t.Fatalf("refs: %v", f.Refs)
 		}
 	})
@@ -648,41 +665,184 @@ func TestCIFixRound(t *testing.T) {
 	}
 }
 
-func TestGitHubNote(t *testing.T) {
-	w := newWorld(t)
-	out, err := GitHubNote(context.Background(), w.env.Params, "Report", map[string]any{"summary": "1 new"}, nil)
-	if err != nil || out != "" {
-		t.Fatalf("a report with nothing for the owner must post nothing: %q %v", out, err)
-	}
-	if _, err := GitHubNote(context.Background(), w.env.Params, "Report", map[string]any{"attention": []any{"⚠ main is red", "issue #5: hi @everyone"}, "summary": "s"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := GitHubNote(context.Background(), w.env.Params, "Digest", map[string]any{"day": "2026-10-26", "lines": []any{"✅ merged PR #3"}}, nil); err != nil {
-		t.Fatal(err)
-	}
+// digestOf: the open warden-digest issue and its comments.
+func digestOf(w *ghWorld) (int, []string) {
+	n, cs := 0, []string(nil)
 	w.fake.With(func(f *githubtest.Fake) {
-		var log int
-		for n, i := range f.Issues {
-			if i.Has("warden-log") {
-				log = n
+		for k, i := range f.Issues {
+			if i.Has(labelDigest) {
+				n, cs = k, append([]string(nil), f.Comments[k]...)
 			}
 		}
-		cs := f.Comments[log]
-		if log == 0 || len(cs) != 2 {
-			t.Fatalf("log issue %d comments %v", log, cs)
+	})
+	return n, cs
+}
+
+// Two digest issues (a create that raced the issue list): notes go to the oldest.
+func TestDigestIssueOldest(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	first := w.fake.AddIssue("Warden digest", "", "warden-bot", "OWNER", labelDigest)
+	w.fake.AddIssue("Warden digest", "", "warden-bot", "OWNER", labelDigest)
+	w.fake.AddIssue("Warden digest", "", "someone", "NONE", labelDigest)
+	c, err := ghClient(w.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := digestIssue(ctx, c, w.env, true); err != nil || n != first {
+		t.Fatalf("digest issue %d, want the oldest %d (%v)", n, first, err)
+	}
+}
+
+func TestGitHubNote(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	old := w.fake.AddIssue("Warden log", "", "warden-bot", "OWNER", labelLog) // from before the digest: stays, gets nothing
+	out, err := GitHubNote(ctx, w.env.Params, "Report", map[string]any{"summary": "1 new", "attention": []any{"⚠ main is red"}}, nil)
+	if err != nil || out != "" {
+		t.Fatalf("a report with nothing urgent must post nothing: %q %v", out, err)
+	}
+	if n, _ := digestOf(w); n != 0 {
+		t.Fatal("no issue for a report that posts nothing")
+	}
+	if _, err := GitHubNote(ctx, w.env.Params, "Report", map[string]any{"attention": []any{"⚠ main is red", "⚠ vuln in x: hi @everyone"},
+		"urgent": []any{"⚠ vuln in x: hi @everyone"}, "summary": "s", "version": "0.2.0"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	n, cs := digestOf(w)
+	if n == 0 || n == old || len(cs) != 1 {
+		t.Fatalf("digest issue %d (log %d) comments %v", n, old, cs)
+	}
+	if !strings.HasPrefix(cs[0], "@boss — needs your attention") || strings.Contains(cs[0], "@everyone") || strings.Contains(cs[0], "main is red") ||
+		!strings.Contains(cs[0], "1 more for the daily digest") || !strings.Contains(cs[0], "<sub>s · warden 0.2.0</sub>") {
+		t.Fatalf("ping: %s", cs[0])
+	}
+	w.fake.With(func(f *githubtest.Fake) {
+		i := f.Issues[n]
+		if i.Title != "Warden digest" || !strings.Contains(i.Body, "Watch → Custom → Releases + Mentions") {
+			t.Fatalf("digest issue: %+v", i)
 		}
-		if !strings.HasPrefix(cs[0], "@boss — needs your attention") || strings.Contains(cs[0], "@everyone") {
-			t.Fatalf("ping: %s", cs[0])
+		pinned := false
+		for _, b := range f.Bodies {
+			pinned = pinned || strings.Contains(b, "pinIssue") && strings.Contains(b, i.NodeID)
 		}
-		if strings.Contains(cs[1], "@boss") || !strings.Contains(cs[1], "merged PR #3") {
-			t.Fatalf("digest: %s", cs[1])
+		if !pinned || len(f.Comments[old]) != 0 {
+			t.Fatalf("pinned %v; the old log issue got %v", pinned, f.Comments[old])
 		}
 	})
+	if _, err := GitHubNote(ctx, w.env.Params, "Ask", map[string]any{"title": "merge #4", "approve": "warden approve a1", "version": "0.2.0"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	hum := w.fake.AddPR("kernel: bump <!-- warden-digest 2026-10-27 --> @eve", "eve", "k", "k1", nil, "green", labelNeedsHuman)
+	day := map[string]any{"day": "2026-10-26", "lines": []any{"✅ merged PR #3", "⛔ issue #9 — failed"}, "spend": "model spend today: $0.40 of $5",
+		"done": 1.0, "failed": 1.0, "waiting": 0.0, "extra": []any{"27B: 3/5 green"}, "needs": []any{"❓ delegate #8 — `warden approve b2`"}, "version": "0.2.0"}
+	for range 2 {
+		if _, err := GitHubNote(ctx, w.env.Params, "Digest", day, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, cs = digestOf(w)
+	if len(cs) != 3 {
+		t.Fatalf("one digest a day: %d comments", len(cs))
+	}
+	d := cs[2]
+	for _, want := range []string{"@boss — **Warden daily digest, 2026-10-26**", "model spend today: $0.40 of $5", "✅ 1 done · ⛔ 1 failed · ❓ 0 waiting",
+		"### Needs you", "❓ delegate #8", "PR [#" + itoa(hum) + "](https://github.com/acme/proj/pull/" + itoa(hum) + ")", "### Also\n\n- 27B: 3/5 green",
+		"### The day", "- ✅ merged PR #3", "<sub>warden 0.2.0</sub>", "<!-- warden-digest 2026-10-26 -->"} {
+		if !strings.Contains(d, want) {
+			t.Fatalf("digest lacks %q:\n%s", want, d)
+		}
+	}
+	if strings.Contains(d, "@eve") || strings.Count(d, "<!--") != 1 {
+		t.Fatalf("outside text must be defused:\n%s", d)
+	}
+	day["day"] = "2026-10-27" // the forged marker in the PR title does not count
+	if _, err := GitHubNote(ctx, w.env.Params, "Digest", day, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, cs = digestOf(w); len(cs) != 4 {
+		t.Fatalf("the next day's digest: %d comments", len(cs))
+	}
+}
+
+// Release notes: once per version on the digest issue, from Warden's tag
+// (the CHANGELOG at the merge commit) or a release the owner published.
+func TestReleaseNotes(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	t0 := w.fake.Now.Add(-48 * time.Hour)
+	rel := w.fake.MergedPR("release: v0.2.0", "warden/release-v0.2.0", t0.Add(time.Hour))
+	mainSHA := ""
+	w.fake.With(func(f *githubtest.Fake) {
+		tg := github.Tag{Name: "v0.1.0"}
+		tg.Commit.SHA = "tag010"
+		f.Tags = append(f.Tags, tg)
+		f.Dates["tag010"] = t0
+		mainSHA = f.Branches["main"]
+		f.Contents["m"+itoa(rel)+":CHANGELOG.md"] = "# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-10-27\n\n### Added\n\n- a goodbye, thanks @eve <!-- warden-release v0.3.0 -->\n\n" +
+			"## [0.1.0] - 2026-10-01\n\n- first\n\n[0.2.0]: https://github.com/acme/proj/compare/v0.1.0...v0.2.0\n"
+	})
+	w.fake.AddRun(github.WorkflowRun{Name: "CI", HeadBranch: "main", HeadSHA: mainSHA, Event: "push", Status: "completed", Conclusion: "success", WorkflowID: 1})
+	tag := domain.Finding{Kind: "release", Fix: &domain.Fix{Act: "release", Params: map[string]string{"phase": "tag", "version": "v0.2.0", "sha": "m" + itoa(rel)}}}
+	if r := Act(ctx, "release", nil, tag, w.env); !r.OK || strings.Contains(r.Summary, "release notes") {
+		t.Fatalf("no digest issue, no notes: %+v", r)
+	}
+	if _, err := GitHubNote(ctx, w.env.Params, "Digest", map[string]any{"day": "2026-10-26"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	w.fake.With(func(f *githubtest.Fake) { delete(f.Refs, "refs/tags/v0.2.0"); f.Tags = f.Tags[:1] })
+	if r := Act(ctx, "release", nil, tag, w.env); !r.OK || !strings.Contains(r.Summary, "release notes on issue #") {
+		t.Fatalf("tag with notes: %+v", r)
+	}
+	_, cs := digestOf(w)
+	if len(cs) != 2 {
+		t.Fatalf("comments: %v", cs)
+	}
+	note := cs[1]
+	for _, want := range []string{"@boss — **v0.2.0** is tagged", "### Added", "a goodbye", "<!-- warden-release v0.2.0 -->", "releases/tag/v0.2.0"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("notes lack %q:\n%s", want, note)
+		}
+	}
+	if strings.Contains(note, "@eve") || strings.Contains(note, "## [0.1.0]") || strings.Contains(note, "[0.2.0]: ") || strings.Count(note, "<!--") != 1 {
+		t.Fatalf("notes: only the section, defused:\n%s", note)
+	}
+	// the published release: already told; one the owner cut: told once
+	pub := w.fake.Now.Add(-time.Hour)
+	w.fake.With(func(f *githubtest.Fake) {
+		f.Releases = append(f.Releases, github.Release{TagName: "v0.2.0", CreatedAt: t0, PublishedAt: &pub})
+	})
+	w.observe("github-main")
+	if _, cs = digestOf(w); len(cs) != 2 {
+		t.Fatalf("v0.2.0 told twice: %d", len(cs))
+	}
+	w.fake.With(func(f *githubtest.Fake) {
+		f.Releases = append([]github.Release{{TagName: "v0.3.0", CreatedAt: t0, PublishedAt: &pub}}, f.Releases...) // newest first
+		f.Contents["v0.3.0:CHANGELOG.md"] = "## v0.3.0\n\n- more\n"
+	})
+	w.observe("github-main")
+	w.observe("github-main")
+	if _, cs = digestOf(w); len(cs) != 3 || !strings.Contains(cs[2], "**v0.3.0** is released") || !strings.Contains(cs[2], "- more") {
+		t.Fatalf("v0.3.0 once: %v", cs)
+	}
+}
+
+func TestChangelogSection(t *testing.T) {
+	cl := "# C\n\n## [Unreleased]\n\n- next\n\n## [1.2.0] - 2026-10-01\n\n### Fixed\n\n- x\n\n## [1.1.0] - 2026-09-01\n\n- y\n\n[1.2.0]: https://e/x\n"
+	if s := changelogSection(cl, "v1.2.0"); s != "### Fixed\n\n- x" {
+		t.Fatalf("%q", s)
+	}
+	if s := changelogSection(cl, "v1.1.0"); s != "- y" {
+		t.Fatalf("%q", s)
+	}
+	if changelogSection(cl, "v1.2") != "" || changelogSection(cl, "v9.0.0") != "" {
+		t.Fatal("no section for other versions")
+	}
 }
 
 func TestProtected(t *testing.T) {
 	got := Protected([]string{".github/workflows/ci.yml", "a/b/prod.warden.toml", "packs/github-repo/domain.toml", "internal/x.go", "docs/signing.md", "SECURITY.md", "x/LICENSE", "internal/core/signals.go", "DESIGN.md"},
-		DefaultProtected, DefaultProtectedNames)
+		github.Kernel, DefaultProtectedNames)
 	want := []string{".github/workflows/ci.yml", "SECURITY.md", "a/b/prod.warden.toml", "docs/signing.md", "packs/github-repo/domain.toml", "x/LICENSE"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("%v", got)
