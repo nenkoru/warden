@@ -8,9 +8,24 @@ Days and weeks are in Europe/Moscow.
 
 | week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | tool-call errors / call | reverted | top failures | idle hours |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-W44 (so far) | 5 | 2 | 100% (2/2) | 2.0 | 0.0 | 45s | 9.3M / 11.8k | 0.04 (9/251) | 0 | loop 5, tool-call 4, wrong-edit 1 | 5.7 |
+| 2026-W44 (so far) | 7 | 2 | 66% (2/3) | 2.1 | 0.1 | 7s | 13.7M / 21.2k | 0.04 (15/338) | 0 | loop 6, tool-call 4, wrong-edit 2 | 13.2 |
 
 ## Days
+
+### 2026-10-29
+
+| task | PR | size | brain / model | attempts | steps | tool calls | tool-call errors | wall time | tokens in / out | CI first push | fix rounds | merged | reverted | review comments | failures |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| PR #22 | #22 | — | delegate | 1 | 0 | 0 | 0 | 6s | 0 / 0 | — | 0 | no | no | 0 | — |
+| PR #23 | #23 | — | delegate | 1 | 0 | 0 | 0 | 4s | 0 / 0 | — | 0 | no | no | 0 | — |
+| #18 | #24 | S | local / qwen3.8-27b-local | 3 | 69 | 87 | 6 | 12m 42s | 4.4M / 9.4k | red | 1 | no | no | 0 | wrong-edit, loop |
+
+Failures:
+
+- 09:43 #18 new: **loop** — issue #18: the brain local failed (stopped after 25 steps (max_steps)); tried again next tick
+- 10:05 #18 fix: **wrong-edit** — PR #24: fix round pushed (brain: local)
+
+Idle: 7.5 h (off-hours 7.5 h).
 
 ### 2026-10-28
 
