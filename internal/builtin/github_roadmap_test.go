@@ -360,6 +360,41 @@ func TestRFCWaits(t *testing.T) {
 	}
 }
 
+// A digest issue is never opened twice: with an open warden-digest issue the
+// act skips the plan's digest issue (no new issue), without one it opens it.
+func TestDigestIssueNotOpenedTwice(t *testing.T) {
+	fake := githubtest.New(t, secret, "warden-bot", "acme/proj")
+	c := &github.Client{Base: fake.URL(), Repo: "acme/proj", HTTP: fake.Server.Client(), token: secret}
+	ctx := context.Background()
+	digest := RoadmapIssue{Title: "Warden digest", Body: "notes", Kind: "chore", Size: "S", Digest: true}
+	env := &Env{State: t.TempDir(), Params: map[string]string{"repo": "acme/proj"}}
+	// an open digest issue already exists: the plan's digest is skipped
+	fake.AddIssue("Warden digest", "", "warden-bot", "OWNER", labelDigest)
+	st := &roadmapState{Week: "2026-W44"}
+	opened, notes := roadmapIssues(ctx, c, env, st, "2026-W44", []RoadmapIssue{digest}, []string{"Warden digest"}, true)
+	if len(opened) != 0 || len(st.Issues) != 0 {
+		t.Fatalf("a second digest issue opened: %v state %v", opened, st.Issues)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "digest issue already exists") {
+		t.Fatalf("notes: %v", notes)
+	}
+	// without an open digest issue it is opened, labeled warden-digest
+	st2 := &roadmapState{Week: "2026-W44"}
+	opened, notes = roadmapIssues(ctx, c, env, st2, "2026-W44", []RoadmapIssue{digest}, nil, false)
+	if len(opened) != 1 || len(st2.Issues) != 1 {
+		t.Fatalf("digest not opened: %v state %v notes %v", opened, st2.Issues, notes)
+	}
+	var labeled bool
+	fake.With(func(f *githubtest.Fake) {
+		for _, i := range f.Issues {
+			labeled = labeled || i.Has(labelDigest)
+		}
+	})
+	if !labeled {
+		t.Fatal("the digest issue is not labeled warden-digest")
+	}
+}
+
 func TestDuplicateOf(t *testing.T) {
 	open := []string{"Retry the contents API on 502", "RFC: a pluggable signal bus"}
 	for title, want := range map[string]bool{
