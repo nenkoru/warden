@@ -8,9 +8,23 @@ Days and weeks are in Europe/Moscow.
 
 | week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | tool-call errors / call | reverted | top failures | idle hours |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-W44 (so far) | 7 | 2 | 66% (2/3) | 2.1 | 0.1 | 7s | 13.7M / 21.2k | 0.04 (15/338) | 0 | loop 6, tool-call 4, wrong-edit 2 | 13.2 |
+| 2026-W44 (so far) | 7 | 3 | 66% (2/3) | 2.1 | 0.1 | 7s | 13.7M / 21.2k | 0.04 (15/338) | 0 | loop 6, tool-call 4, wrong-edit 2 | 20.9 |
 
 ## Days
+
+### 2026-10-31 (so far)
+
+No task worked.
+
+Idle: 0.2 h (off-hours 0.2 h).
+
+### 2026-10-30
+
+| task | PR | size | brain / model | attempts | steps | tool calls | tool-call errors | wall time | tokens in / out | CI first push | fix rounds | merged | reverted | review comments | failures |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| #18 | #24 | M | — | 0 | 0 | 0 | 0 | 8s | 0 / 0 | red | 0 | yes | no | 0 | — |
+
+Idle: 7.5 h (off-hours 7.5 h).
 
 ### 2026-10-29
 
