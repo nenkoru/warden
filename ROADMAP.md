@@ -1,26 +1,25 @@
 # Roadmap
 
-> Generated weekly by Warden; the owner edits freely; Warden rewrites it next week. (2026-W44)
+> Generated weekly by Warden; the owner edits freely; Warden rewrites it next week. (2026-W45, brain: local)
 
 ## Now
-- Fix the `merge-pr` act to detect 405 merge-conflict errors before attempting the API call (#5, #12)
-- Create `ROADMAP.md` with the current state to give Warden a persistent planning surface
-- Triage and close duplicate digest issues #10 and #11
+- Resolve merge conflict in PR #5 (act-hardening) and merge (#5)
+- Address top experiment failure: 'loop' task class in 27B model (7 tasks, 44.9 idle hours)
+- Triage open PR #22 (pinned Alpine packages) for build optimization
 
 ## Next
-- Land the v0.2 feature PR #12 (experiment log, digest, fleet self-update, quality gates) — needs-human, blocked on owner review
-- Resolve PR #5 (act-hardening) merge conflict and merge
-- First release (issue #3) once the owner approves the tag
+- First release (issue #3) once owner approves tag and v0.2 features are stable
+- Monitor ACP Schema v2.0.0-alpha.12 for protocol changes affecting Warden's agent-client
+- MCP Registry v1.8.7 integration if tool-discovery needs arise
 
 ## Later / ideas
-- MCP registry v1.8.6 integration if Warden gains tool-discovery needs
-- ACP schema v2.0.0-alpha.10 tracking for agent-protocol changes
-- eMudhra key-incident response notes for Go supply-chain hygiene
+- A2A v1.1.0-rc tracking for agent-to-agent communication standards
+- Go 1.26.10 supply-chain hygiene notes (eMudhra incident)
+- OpenHands v1.34.0 feature parity check
 
 ## Done recently
-- #14 k8s-namespace: project namespaces, failed Jobs, CronJob images, Helm charts
-- #13 docs: 27B experiment log for 2026-10-28
-- #8 k8s-namespace (initial)
-- #6 chore: changes from claude/pickup-title
-- #2 Feat/GitHub maintainer
-- #1 build: Go 1.26.10 for GO-2026-6809
+- #27 docs: 27B experiment log for 2026-11-01
+- #24 chore: close duplicate digest issues #10 and #11
+- #20 chore: create ROADMAP.md with current state
+- #19 fix: handle 405 merge-conflict in merge-pr act
+- #12 feat: Warden v0.2 — experiment log, digest, fleet self-update, quality gates
