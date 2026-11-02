@@ -350,6 +350,7 @@ base_url = "{llm_url}"
 model = "qwen-local"
 api_key_file = "llm.key"
 free = true
+reasoning = "drop"
 unavailable = ["00:30-08:00", "sat", "sun"]
 tz = "Europe/Moscow"
 [brains.paidlocal]
@@ -501,5 +502,31 @@ func TestAttentionUrgent(t *testing.T) {
 		if strings.Contains(got, not) {
 			t.Errorf("urgent has %q", not)
 		}
+	}
+}
+
+// A free (local) brain sends its reasoning back with its earlier turns, as
+// a Qwen chat template expects between tool calls; a bad setting fails.
+func TestBrainReasoningReplay(t *testing.T) {
+	var calls atomic.Int32
+	var saw atomic.Bool
+	srv := fakeOpenAI(t, &calls, "", &saw)
+	defer srv.Close()
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "llm.key"), []byte("key-from-file\n"), 0o600)
+	_ = os.MkdirAll(filepath.Join(dir, "d"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "d", "domain.toml"), []byte("name = \"d\"\n"), 0o644)
+	conf := func(reasoning string) *Config {
+		return writeConfig(t, dir, fmt.Sprintf("domain = \"d\"\nsandbox = \"none\"\nbrain_for = { triage = \"local\" }\n[brains.local]\nprovider = \"openai\"\n"+
+			"base_url = %q\nmodel = \"qwen-local\"\napi_key_file = \"llm.key\"\nfree = true\nmax_steps = 4\n%s", srv.URL, reasoning))
+	}
+	in := open(t, conf(""))
+	tools := []brain.Tool{{Name: "ping", Run: func(context.Context, map[string]any) (string, bool) { return "pong", true }}}
+	if out, err := in.brainFor("triage").Do(context.Background(), "s", "t", tools); err != nil || out != "done" || !saw.Load() {
+		t.Fatalf("replay: %q %v saw=%v", out, err, saw.Load())
+	}
+	if in, err := Open(conf("reasoning = \"keep\"\n")); err == nil {
+		in.Close()
+		t.Fatal("reasoning = keep: want an error")
 	}
 }

@@ -171,11 +171,9 @@ func (b *coderBrain) Do(ctx context.Context, system, task string, tools []brain.
 }
 
 func use(tools []brain.Tool, name string, args map[string]any) string {
-	for _, t := range tools {
-		if t.Name == name {
-			out, _ := t.Run(context.Background(), args)
-			return out
-		}
+	if t := brain.Find(tools, name); t != nil {
+		out, _ := t.Run(context.Background(), args)
+		return out
 	}
 	return "no tool " + name
 }

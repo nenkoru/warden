@@ -7,6 +7,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The coding brain's harness, reshaped after oh-my-pi, where the same local 27B works well (docs/harness-27b.md):
+  `read` in windows of 300 lines with a continuation note, `grep` and `find` instead of whole-file reads, `edit` with
+  exact, whitespace-insensitive and unique 95%-similar matching whose misses show the closest lines, `write` for new
+  files; other harnesses' tool and argument names work as aliases. The tool loop repairs tool-call arguments, runs
+  calls left in the reply text, answers a repeated call briefly and ends a run on the third, warns before the last
+  turns, elides old tool results past `context_budget`, and defaults to 50 turns. A shorter coder prompt with a way
+  of working (plan, locate, read ranges, edit, test, summarize) and the repository's layout in the task; GitHub
+  steps in an issue are left to Warden. An issue the brain gets stuck on is retried once a day, then left for the
+  owner.
+
+### Added
+
+- `reasoning = "replay" | "drop"` on an OpenAI-compatible brain: a free (local) brain now sends its reasoning back
+  with its earlier turns, as a Qwen chat template expects between tool calls (it was always dropped); a paid one
+  still drops it.
+- `max_steps`, `context_budget` and `extra_body` on endpoint brains (`extra_body`: request fields as they are,
+  e.g. `chat_template_kwargs = { enable_thinking = true }` for a local Qwen behind vLLM).
+- `scripts/replay-27b.sh`: replays tasks of the 27B experiment log against a live model on an older harness and this
+  one, side by side.
+
 ### Fixed
 
 - `merge-pr` now detects a 405 (merge conflict) from the GitHub merge endpoint, labels the PR `merge-conflict`,

@@ -98,6 +98,20 @@ type BrainConfig struct {
 	// Unavailable: when this brain must not be called: "HH:MM-HH:MM"
 	// windows and weekday names ("sat", "sun"), in TZ. The router skips it.
 	Unavailable []string `toml:"unavailable"`
+	// MaxSteps: model turns per call (endpoint brains; default 50).
+	MaxSteps int `toml:"max_steps"`
+	// ContextBudget: prompt tokens past which older tool results are elided
+	// (endpoint brains; default 64000, -1 never).
+	ContextBudget int `toml:"context_budget"`
+	// ExtraBody: fields added to every request as they are (endpoint
+	// brains), e.g. for a local Qwen 3.8 behind vLLM, the thinking that
+	// oh-my-pi turns on: { chat_template_kwargs = { enable_thinking = true } }.
+	ExtraBody map[string]any `toml:"extra_body"`
+	// Reasoning (openai): "replay" sends a model's reasoning back with its
+	// earlier turns, as the chat templates of local reasoning models (Qwen)
+	// expect between tool calls; "drop" removes it from every response.
+	// Default: replay for a free brain, drop for a paid one.
+	Reasoning string `toml:"reasoning"`
 }
 
 // BudgetConfig: [budget] — USD per day; alerts become immediate pings.

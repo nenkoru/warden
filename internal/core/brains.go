@@ -160,10 +160,14 @@ func (in *Instance) newSlot(name string, b BrainConfig) (*brainSlot, error) {
 	if err != nil {
 		return nil, err
 	}
+	if b.Reasoning != "" && b.Reasoning != "replay" && b.Reasoning != "drop" {
+		return nil, fmt.Errorf("brain %s: reasoning must be replay or drop, not %q", name, b.Reasoning)
+	}
 	s := &brainSlot{name: name, cfg: b, paid: !isFree(b), win: win, cost: -1}
 	switch b.Provider {
 	case "anthropic", "openai":
-		ec := brain.EndpointConfig{Provider: b.Provider, BaseURL: b.BaseURL, Model: b.Model, APIKeyEnv: b.APIKeyEnv, Auth: b.Auth}
+		ec := brain.EndpointConfig{Provider: b.Provider, BaseURL: b.BaseURL, Model: b.Model, APIKeyEnv: b.APIKeyEnv, Auth: b.Auth,
+			MaxSteps: b.MaxSteps, ContextBudget: b.ContextBudget, ExtraBody: b.ExtraBody}
 		if b.APIKeyFile != "" {
 			ec.APIKeyEnv = "WARDEN_KEY_FROM_FILE_" + strings.ToUpper(name) // unset: the transport adds the key from the file
 		}
@@ -472,7 +476,8 @@ func (m costMeter) Record(model string, u meter.Usage) (float64, []meter.Alert) 
 
 // brainTransport: the API key from api_key_file at call time; LiteLLM's
 // per-call cost header kept for the meter; an OpenAI-compatible server's
-// reasoning fields dropped from responses so they are never sent back.
+// reasoning fields dropped from responses so they are never sent back,
+// unless the brain replays them (replayReasoning).
 type brainTransport struct {
 	slot *brainSlot
 	base http.RoundTripper
@@ -503,7 +508,7 @@ func (t *brainTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			t.slot.setCost(c)
 		}
 	}
-	if cfg.Provider == "openai" && resp.StatusCode == 200 && strings.Contains(resp.Header.Get("Content-Type"), "json") {
+	if cfg.Provider == "openai" && !replayReasoning(cfg) && resp.StatusCode == 200 && strings.Contains(resp.Header.Get("Content-Type"), "json") {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 		resp.Body.Close()
 		if err != nil {
@@ -515,6 +520,12 @@ func (t *brainTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Header.Del("Content-Length")
 	}
 	return resp, nil
+}
+
+// replayReasoning: whether a brain's reasoning goes back with its earlier
+// turns (reasoning = "replay", or unset on a free brain).
+func replayReasoning(b BrainConfig) bool {
+	return b.Reasoning == "replay" || b.Reasoning == "" && isFree(b)
 }
 
 // stripReasoning drops reasoning_content / reasoning from every choice's

@@ -67,6 +67,10 @@ data:
     free         = true
     unavailable  = []                    # e.g. ["00:30-08:00", "sat", "sun"]
     tz           = "UTC"
+    # max_steps      = 50                # turns per coding run
+    # context_budget = 64000             # prompt tokens past which older tool results are elided
+    # extra_body     = { chat_template_kwargs = { enable_thinking = true } }   # a local Qwen's thinking (docs/harness-27b.md)
+    # reasoning      = "replay"          # default for a free brain: its reasoning goes back with its turns
 
     [budget]
     per_day_usd       = 1000

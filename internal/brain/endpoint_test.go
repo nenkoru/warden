@@ -3,6 +3,7 @@ package brain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +95,7 @@ func TestAnthropicToolLoop(t *testing.T) {
 			jsonEq(t, msgs[1], `{"role":"assistant","content":`+turn1+`}`) // echoed verbatim
 			jsonEq(t, msgs[2], `{"role":"user","content":[
 				{"type":"tool_result","tool_use_id":"t1","content":"echo:hi","is_error":false},
-				{"type":"tool_result","tool_use_id":"t2","content":"error: unknown tool nope","is_error":true}]}`)
+				{"type":"tool_result","tool_use_id":"t2","content":"error: unknown tool \"nope\". The tools are: echo.","is_error":true}]}`)
 			return 200, `{"content":[{"type":"text","text":"done"}],"stop_reason":"pause_turn"}`
 		},
 		func(h http.Header, b map[string]any) (int, string) {
@@ -229,8 +230,9 @@ func TestOpenAIToolLoop(t *testing.T) {
 	jsonEq(t, st.Data(), `{"steps":"2","tool_calls":"2","unknown_tool":"0","bad_args":"1","tool_errors":"0","repeats":"0","max_prompt_tokens":"0","finish_reason":"stop"}`)
 }
 
-// A model that repeats one failing call until max_steps: every call counted
-// as failed and repeated, the largest prompt kept, the end is max_steps.
+// A model that repeats one failing call: every call counted as failed and
+// repeated, the largest prompt kept; the third identical call with the same
+// result ends the run as a loop, before max_steps.
 func TestEndpointStatsLoop(t *testing.T) {
 	again := func(prompt int) func(http.Header, map[string]any) (int, string) {
 		return func(http.Header, map[string]any) (int, string) {
@@ -241,11 +243,11 @@ func TestEndpointStatsLoop(t *testing.T) {
 	srv, _ := serve(t, again(10), again(300), again(20))
 	st := &Stats{}
 	ctx := WithStats(context.Background(), st)
-	_, err := Endpoint(EndpointConfig{Provider: "openai", BaseURL: srv.URL, Model: "m", MaxSteps: 3}).Do(ctx, "", "task", []Tool{echo})
-	if err == nil || !strings.Contains(err.Error(), "max_steps") {
+	_, err := Endpoint(EndpointConfig{Provider: "openai", BaseURL: srv.URL, Model: "m", MaxSteps: 10}).Do(ctx, "", "task", []Tool{echo})
+	if !errors.Is(err, ErrStuck) || !strings.Contains(err.Error(), "repeated identical tool calls") {
 		t.Fatalf("err=%v", err)
 	}
-	jsonEq(t, st.Data(), `{"steps":"3","tool_calls":"3","unknown_tool":"0","bad_args":"0","tool_errors":"3","repeats":"2","max_prompt_tokens":"300","finish_reason":"max_steps"}`)
+	jsonEq(t, st.Data(), `{"steps":"3","tool_calls":"3","unknown_tool":"0","bad_args":"0","tool_errors":"3","repeats":"2","max_prompt_tokens":"300","finish_reason":"loop"}`)
 	if StatsFrom(context.Background()) != nil || (*Stats)(nil).Data() != nil {
 		t.Fatal("no Stats: nothing counted, nothing to read")
 	}
@@ -255,7 +257,7 @@ func TestEndpointStatsLoop(t *testing.T) {
 func TestNormalize(t *testing.T) {
 	c := EndpointConfig{Provider: "anthropic"}
 	if err := c.Normalize(); err != nil || c.BaseURL != "https://api.anthropic.com" || c.Model != "claude-opus-5-5" ||
-		c.APIKeyEnv != "ANTHROPIC_API_KEY" || c.Auth != "x-api-key" || c.MaxSteps != 25 || c.MaxTokens != 16000 {
+		c.APIKeyEnv != "ANTHROPIC_API_KEY" || c.Auth != "x-api-key" || c.MaxSteps != 50 || c.ContextBudget != 64000 || c.KeepResults != 6 || c.MaxTokens != 16000 {
 		t.Errorf("anthropic defaults: %+v %v", c, err)
 	}
 	c = EndpointConfig{Provider: "openai", Model: "gpt"}

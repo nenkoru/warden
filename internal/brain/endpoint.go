@@ -26,8 +26,15 @@ type EndpointConfig struct {
 	Model     string // default (anthropic): claude-opus-5-5; required for openai
 	APIKeyEnv string // default: ANTHROPIC_API_KEY | OPENAI_API_KEY (empty key: no auth header)
 	Auth      string // anthropic: "x-api-key" (default) or "bearer" (Authorization: Bearer)
-	MaxSteps  int    // tool-loop turns per call (default 25)
+	MaxSteps  int    // tool-loop turns per call (default 50; a loop guard and a warning before the end keep it from mattering)
 	MaxTokens int    // per response (default 16000)
+	// ContextBudget: once a prompt passes this many tokens, every tool result
+	// but the last KeepResults is elided (default 64000; -1: never).
+	ContextBudget int
+	KeepResults   int // default 6
+	// ExtraBody: fields added to every request body as they are, e.g. for a
+	// local Qwen behind vLLM: chat_template_kwargs = { enable_thinking = true }.
+	ExtraBody map[string]any
 	// Fallbacks (anthropic, api.anthropic.com only): let the API re-serve a
 	// refused request on another model (server-side fallback, default on).
 	Fallbacks *bool
@@ -67,7 +74,13 @@ func (c *EndpointConfig) Normalize() error {
 		return fmt.Errorf("brain: provider must be anthropic or openai, not %q", c.Provider)
 	}
 	if c.MaxSteps <= 0 {
-		c.MaxSteps = 25
+		c.MaxSteps = 50
+	}
+	if c.ContextBudget == 0 {
+		c.ContextBudget = 64000
+	}
+	if c.KeepResults <= 0 {
+		c.KeepResults = 6
 	}
 	if c.MaxTokens <= 0 {
 		c.MaxTokens = 16000
@@ -111,22 +124,10 @@ func (e *endpoint) Do(ctx context.Context, system, task string, tools []Tool) (s
 	return e.openai(ctx, system, task, tools)
 }
 
-// run runs one tool call and counts it in ctx's Stats (raw: the arguments' text).
-func (e *endpoint) run(ctx context.Context, tools []Tool, name string, args map[string]any, raw string) (string, bool) {
-	out, ok, how := "error: unknown tool "+name, false, CallUnknown
-	if t := find(tools, name); t != nil && t.Run != nil {
-		out, ok = t.Run(ctx, args)
-		how = map[bool]CallOutcome{true: CallOK, false: CallFailed}[ok]
-	}
-	StatsFrom(ctx).Call(name, raw, how)
-	fmt.Fprintf(e.cfg.Log, "warden brain: %s → %s\n", name, firstLine(out))
-	return out, ok
-}
-
 // maxSteps: the loop ran out of turns.
 func (e *endpoint) maxSteps(ctx context.Context) error {
 	StatsFrom(ctx).Finish("max_steps")
-	return fmt.Errorf("stopped after %d steps (max_steps)", e.cfg.MaxSteps)
+	return fmt.Errorf("stopped after %d steps (max_steps): %w", e.cfg.MaxSteps, ErrStuck)
 }
 
 // record tells the meter one response's usage; model "" is the configured one.
@@ -193,6 +194,16 @@ func (e *endpoint) post(ctx context.Context, url string, hdr map[string]string, 
 	return json.Unmarshal(rb, out)
 }
 
+// body: a request body's fixed fields, ExtraBody under them.
+func (e *endpoint) body() map[string]any {
+	body := map[string]any{}
+	for k, v := range e.cfg.ExtraBody {
+		body[k] = v
+	}
+	body["model"], body["max_tokens"] = e.cfg.Model, e.cfg.MaxTokens
+	return body
+}
+
 // ---- Anthropic Messages API
 
 func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []Tool) (string, error) {
@@ -202,7 +213,7 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 	} else if k != "" {
 		hdr["x-api-key"] = k
 	}
-	body := map[string]any{"model": e.cfg.Model, "max_tokens": e.cfg.MaxTokens}
+	body := e.body()
 	if system != "" {
 		body["system"] = system
 	}
@@ -220,7 +231,8 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 	// the conversation is append-only: assistant turns go back exactly as received
 	msgs := []any{map[string]any{"role": "user", "content": task}}
 	var text strings.Builder
-	for range e.cfg.MaxSteps {
+	ss := newSession(&e.cfg, tools)
+	for turn := range e.cfg.MaxSteps {
 		body["messages"] = msgs
 		var resp struct {
 			Content    json.RawMessage `json:"content"`
@@ -239,7 +251,8 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 		e.record(resp.Model, meter.Usage{Input: resp.Usage.Input, Output: resp.Usage.Output,
 			CacheRead: resp.Usage.CacheRead, CacheWrite: resp.Usage.CacheWrite})
 		st := StatsFrom(ctx)
-		st.Step(resp.Usage.Input + resp.Usage.CacheRead + resp.Usage.CacheWrite)
+		prompt := resp.Usage.Input + resp.Usage.CacheRead + resp.Usage.CacheWrite
+		st.Step(prompt)
 		st.Finish(resp.StopReason)
 		var blocks []struct {
 			Type  string         `json:"type"`
@@ -253,18 +266,30 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 		}
 		msgs = append(msgs, map[string]any{"role": "assistant", "content": resp.Content})
 		var results []map[string]any
+		loop := false
 		for _, bl := range blocks {
 			switch bl.Type {
 			case "text":
 				text.WriteString(bl.Text)
 			case "tool_use":
 				raw, _ := json.Marshal(bl.Input)
-				out, ok := e.run(ctx, tools, bl.Name, bl.Input, string(raw))
-				results = append(results, map[string]any{"type": "tool_result", "tool_use_id": bl.ID, "content": out, "is_error": !ok})
+				out, ok, l := ss.call(ctx, e, bl.Name, bl.Input, string(raw))
+				loop = loop || l
+				r := map[string]any{"type": "tool_result", "tool_use_id": bl.ID, "content": out, "is_error": !ok}
+				ss.keep(bl.Name, r)
+				results = append(results, r)
 			}
+		}
+		if loop {
+			st.Finish("loop")
+			return text.String(), errLoop
 		}
 		switch resp.StopReason {
 		case "tool_use":
+			if w := ss.warn(turn); w != "" && len(results) > 0 {
+				results[len(results)-1]["content"] = results[len(results)-1]["content"].(string) + w
+			}
+			ss.elide(prompt)
 			msgs = append(msgs, map[string]any{"role": "user", "content": results}) // every result in one message
 		case "pause_turn":
 			// a server-side pause: send the conversation back as it is to continue
@@ -281,12 +306,22 @@ func (e *endpoint) anthropic(ctx context.Context, system, task string, tools []T
 
 // ---- OpenAI-compatible Chat Completions
 
+// toolCall: one call in an assistant message.
+type toolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"` // a JSON string, not an object
+	} `json:"function"`
+}
+
 func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool) (string, error) {
 	hdr := map[string]string{}
 	if k := os.Getenv(e.cfg.APIKeyEnv); k != "" {
 		hdr["Authorization"] = "Bearer " + k
 	}
-	body := map[string]any{"model": e.cfg.Model, "max_tokens": e.cfg.MaxTokens}
+	body := e.body()
 	var ts []map[string]any
 	for _, t := range tools {
 		ts = append(ts, map[string]any{"type": "function", "function": map[string]any{"name": t.Name, "description": t.Description, "parameters": t.schema()}})
@@ -300,7 +335,9 @@ func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool
 	}
 	msgs = append(msgs, map[string]any{"role": "user", "content": task})
 	var text strings.Builder
-	for range e.cfg.MaxSteps {
+	ss := newSession(&e.cfg, tools)
+	retries := 0 // replies whose tool call came as text Warden could not parse
+	for turn := range e.cfg.MaxSteps {
 		body["messages"] = msgs
 		var resp struct {
 			Choices []struct {
@@ -326,19 +363,34 @@ func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool
 			return text.String(), errors.New("no choices in the response")
 		}
 		var m struct {
-			Content   *string `json:"content"`
-			ToolCalls []struct {
-				ID       string `json:"id"`
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"` // a JSON string, not an object
-				} `json:"function"`
-			} `json:"tool_calls"`
+			Content   *string    `json:"content"`
+			ToolCalls []toolCall `json:"tool_calls"`
 		}
 		if err := json.Unmarshal(resp.Choices[0].Message, &m); err != nil {
 			return text.String(), fmt.Errorf("bad message in the response: %w", err)
 		}
-		msgs = append(msgs, resp.Choices[0].Message)
+		msg := any(resp.Choices[0].Message)
+		if len(m.ToolCalls) == 0 && m.Content != nil {
+			// a call the server's parser left in the text: run it as a call
+			calls, found := textCalls(*m.Content)
+			if found && len(calls) == 0 {
+				st.Call("(text)", tail(*m.Content, 200), CallBadArgs)
+				if retries++; retries <= 3 {
+					msgs = append(msgs, resp.Choices[0].Message, map[string]any{"role": "user", "content": "Your reply had a tool call written in the text that " +
+						"could not be parsed, so it did not run. Call the tool again through the tool-calling interface, with the arguments as one JSON object."})
+					continue
+				}
+			}
+			if len(calls) > 0 {
+				for i, c := range calls {
+					tc := toolCall{ID: fmt.Sprintf("text-call-%d-%d", turn, i), Type: "function"}
+					tc.Function.Name, tc.Function.Arguments = c.Name, c.Args
+					m.ToolCalls = append(m.ToolCalls, tc)
+				}
+				msg, m.Content = map[string]any{"role": "assistant", "content": "", "tool_calls": m.ToolCalls}, nil
+			}
+		}
+		msgs = append(msgs, msg)
 		if m.Content != nil {
 			text.WriteString(*m.Content)
 		}
@@ -351,22 +403,31 @@ func (e *endpoint) openai(ctx context.Context, system, task string, tools []Tool
 			}
 			return text.String(), nil
 		}
+		var last map[string]any
+		loop := false
 		for _, tc := range m.ToolCalls {
-			var args map[string]any
-			out := ""
-			raw := strings.TrimSpace(tc.Function.Arguments)
-			if raw == "" {
-				raw = "{}"
-			}
-			if err := json.Unmarshal([]byte(raw), &args); err != nil {
-				out = "error: arguments are not a JSON object: " + err.Error()
+			raw := tc.Function.Arguments
+			var out string
+			args, err := parseArgs(raw)
+			if err != nil {
+				out = "error: " + err.Error() + "\nThe arguments you sent: " + tail(raw, 400)
 				st.Call(tc.Function.Name, raw, CallBadArgs)
-				fmt.Fprintf(e.cfg.Log, "warden brain: %s → %s\n", tc.Function.Name, out)
+				fmt.Fprintf(e.cfg.Log, "warden brain: %s → %s\n", tc.Function.Name, firstLine(out))
 			} else {
-				out, _ = e.run(ctx, tools, tc.Function.Name, args, raw)
+				var l bool
+				out, _, l = ss.call(ctx, e, tc.Function.Name, args, raw)
+				loop = loop || l
 			}
-			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": tc.ID, "content": out})
+			last = map[string]any{"role": "tool", "tool_call_id": tc.ID, "content": out}
+			ss.keep(tc.Function.Name, last)
+			msgs = append(msgs, last)
 		}
+		if loop {
+			st.Finish("loop")
+			return text.String(), errLoop
+		}
+		last["content"] = last["content"].(string) + ss.warn(turn)
+		ss.elide(resp.Usage.Prompt)
 	}
 	return text.String(), e.maxSteps(ctx)
 }

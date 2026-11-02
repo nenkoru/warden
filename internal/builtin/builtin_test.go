@@ -213,10 +213,8 @@ func (f fakeBrain) Do(ctx context.Context, system, task string, tools []brain.To
 }
 
 func call(t *testing.T, tools []brain.Tool, name string, args map[string]any) (string, bool) {
-	for _, tl := range tools {
-		if tl.Name == name {
-			return tl.Run(context.Background(), args)
-		}
+	if tl := brain.Find(tools, name); tl != nil {
+		return tl.Run(context.Background(), args)
 	}
 	t.Fatalf("no tool %s", name)
 	return "", false
