@@ -82,7 +82,7 @@ func ownerMention(env *Env) string {
 
 // ---- work-issue
 
-func coderPrompt(env *Env) string {
+func coderPrompt(env *Env, wt string) string {
 	checks := "Warden does not run the code here: CI runs the checks on the pull request, and you get one round to fix what it reports."
 	if checksMode(env) == "local" {
 		checks = "Warden runs the checks itself after you (run_checks runs them in a sandbox)."
@@ -97,7 +97,24 @@ func coderPrompt(env *Env) string {
 		"- Never read, print or look for tokens, keys or credentials. You have none and need none.\n" +
 		"- You cannot run commands or reach the network. " + checks + "\n" +
 		"- Keep the change small and focused; add or update tests; follow the repository's conventions (CONTRIBUTING.md).\n" +
+		coderRules(env, wt) +
 		"When done, reply with a short summary of what you changed and why, for the pull request description."
+}
+
+// coderRules: params.coder_rules for the coder — one line naming a file of
+// the repository (e.g. CONTRIBUTING.md) it is told to read and follow, or
+// else the owner's own text (warden.toml is the owner's), as it is.
+func coderRules(env *Env, wt string) string {
+	r := strings.TrimSpace(param(nil, env, "coder_rules", ""))
+	if r == "" {
+		return ""
+	}
+	if !strings.Contains(r, "\n") && filepath.IsLocal(r) {
+		if st, err := os.Stat(filepath.Join(wt, r)); err == nil && st.Mode().IsRegular() {
+			return "- Before you change anything, read " + r + " (read_file) and follow its rules for contributors.\n"
+		}
+	}
+	return "- The owner's rules for this repository:\n" + short(r, 4000) + "\n"
 }
 
 func coderTools(wt string, env *Env) []brain.Tool {
@@ -116,7 +133,7 @@ func coderTools(wt string, env *Env) []brain.Tool {
 // runCoder: one coding run of a brain in the worktree; st counts its turns
 // and tool calls.
 func runCoder(ctx context.Context, env *Env, nb NamedBrain, wt, task string, st *brain.Stats) (string, error) {
-	return nb.Brain.Do(brain.WithStats(brain.WithDir(ctx, wt), st), systemPrompt(coderPrompt(env), env), task, coderTools(wt, env))
+	return nb.Brain.Do(brain.WithStats(brain.WithDir(ctx, wt), st), systemPrompt(coderPrompt(env, wt), env), task, coderTools(wt, env))
 }
 
 // coderData: an attempt's brain counts and the context they are measured against.
@@ -251,7 +268,7 @@ func workIssue(ctx context.Context, c *github.Client, f domain.Finding, env *Env
 	}
 	prot, kern := protectedFor(env, changed), github.KernelFiles(changed)
 	title := fmt.Sprintf("%s: %s (#%d)", prType(labels), noMention(oneLine(is.Title, 72)), n)
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", title+"\n\nCloses #"+strconv.Itoa(n)+".\nBrain: "+nb.Name+".\n"); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "commit", "-q", "--no-verify", "-m", title+"\n\nCloses #"+strconv.Itoa(n)+".\nBrain: "+nb.Name+".\n"); err != nil {
 		res.Summary = "work-issue: " + err.Error()
 		return res
 	}
@@ -403,7 +420,7 @@ func fixRound(ctx context.Context, c *github.Client, f domain.Finding, env *Env)
 	if blocked, r := guardChange(ctx, c, env, wt, n, changed, ownerWrote(env, is.User.Login)); blocked {
 		return r
 	}
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", fmt.Sprintf("fix: make CI pass (#%d)\n\nBrain: %s.\n", n, nb.Name)); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "commit", "-q", "--no-verify", "-m", fmt.Sprintf("fix: make CI pass (#%d)\n\nBrain: %s.\n", n, nb.Name)); err != nil {
 		res.Summary = "work-issue fix: " + err.Error()
 		return res
 	}
@@ -607,7 +624,7 @@ func mergePR(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 	if r, ok := mergeAllowed(ctx, c, env, pr); !ok {
 		return r
 	}
-	sha, err := c.Merge(ctx, n, pr.Head.SHA, fmt.Sprintf("%s (#%d)", pr.Title, n))
+	sha, err := c.Merge(ctx, n, pr.Head.SHA, fmt.Sprintf("%s (#%d)", pr.Title, n), squashMessage(ctx, c, env, pr))
 	if err != nil {
 		var se *github.StatusError
 		if errors.As(err, &se) && se.Code == 405 {
@@ -624,6 +641,34 @@ func mergePR(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 		res.Data = mergeData(ctx, c, pr, issue, login, files)
 	}
 	return res
+}
+
+// squashMessage: with params.signoff on, the squash commit's body instead of
+// GitHub's default: the Signed-off-by and Co-authored-by trailers of the PR's
+// commits (a delegate's, Dependabot's), then Warden's own sign-off. "" (GitHub's
+// default) when signoff is off.
+func squashMessage(ctx context.Context, c *github.Client, env *Env, pr github.PR) string {
+	if !Signoff(env.Params) {
+		return ""
+	}
+	var lines []string
+	add := func(l string) {
+		if !slices.Contains(lines, l) {
+			lines = append(lines, l)
+		}
+	}
+	if cs, _, err := c.Compare(ctx, or(pr.Base.Ref, mainBranch(env)), pr.Head.SHA); err == nil { // else: Warden's sign-off alone
+		for _, cm := range cs {
+			for _, l := range strings.Split(cm.Commit.Message, "\n") {
+				l = strings.TrimSpace(l)
+				if k := strings.ToLower(l); strings.HasPrefix(k, "signed-off-by:") || strings.HasPrefix(k, "co-authored-by:") {
+					add(l)
+				}
+			}
+		}
+	}
+	add(signoffLine(env.Params))
+	return strings.Join(lines, "\n")
 }
 
 // mergeData: a merged task's numbers for the experiment log: CI green on
@@ -745,7 +790,7 @@ func release(ctx context.Context, c *github.Client, f domain.Finding, env *Env) 
 		return Result{Summary: "release: " + err.Error()}
 	}
 	title := "release: " + ri.Version
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", title); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "commit", "-q", "--no-verify", "-m", title); err != nil {
 		return Result{Summary: "release: " + err.Error()}
 	}
 	if r, failed := pushOrHandOff(ctx, c, env, wt, branch, 0, []string{"CHANGELOG.md"}, false); failed {

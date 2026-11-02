@@ -56,11 +56,11 @@ func TestMergeRefusesKernel(t *testing.T) {
 	}
 	ctx := context.Background()
 	k := f.AddPR("chore: loosen the kernel", "warden-bot", "warden/issue-1-x", "k1", []string{"hello.go", "internal/github/kernel.go"}, "green")
-	if _, err := c.Merge(ctx, k, "k1", "x"); !errors.Is(err, github.ErrKernel) || !strings.Contains(err.Error(), "internal/github/kernel.go") {
+	if _, err := c.Merge(ctx, k, "k1", "x", ""); !errors.Is(err, github.ErrKernel) || !strings.Contains(err.Error(), "internal/github/kernel.go") {
 		t.Fatalf("a kernel PR merged or the wrong error: %v", err)
 	}
 	ok := f.AddPR("fix: a bug", "warden-bot", "warden/issue-2-y", "o1", []string{"hello.go"}, "green")
-	if _, err := c.Merge(ctx, ok, "o1", "y"); err != nil {
+	if _, err := c.Merge(ctx, ok, "o1", "y", ""); err != nil {
 		t.Fatal(err)
 	}
 	f.With(func(f *githubtest.Fake) {

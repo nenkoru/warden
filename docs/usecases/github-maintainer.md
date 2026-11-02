@@ -147,6 +147,29 @@ require a pull request before merging; require status checks `lint`, `test (ubun
 `govulncheck`, `coverage`, `fuzz`, `demos (ubuntu-latest)`; block force pushes; restrict deletions. Then Warden's
 merges pass the same gate as everyone's, and `required_checks` names the same checks.
 
+## Commit identity and the DCO
+
+Warden's commits are by `Warden <warden@localhost>` unless `commit_name` and `commit_email` say otherwise (each
+unset one keeps its default); they set both the author and the committer. For a repository that requires the
+[Developer Certificate of Origin](https://developercertificate.org/), `signoff = "on"` (default `"off"`) ends every
+commit Warden makes with `Signed-off-by: <commit_name> <commit_email>` — `work-issue` and its fix round,
+`publish-log`, `revert-pr`, `roadmap`, `release`, the bumps of the other packs and an owner's `task` — and makes
+`merge-pr` send its own squash message instead of GitHub's default: the `Signed-off-by` and `Co-authored-by`
+trailers of the PR's commits (a delegate's or Dependabot's sign-off is kept), then Warden's. Whoever signs off
+certifies the DCO, so name the person who stands behind Warden's changes:
+
+```toml
+[params]
+commit_name  = "Your Name"
+commit_email = "you@example.com"
+signoff      = "on"
+coder_rules  = "CONTRIBUTING.md"   # the coder reads and follows it; or a short text of your own
+```
+
+`coder_rules` goes into the coding brain's prompt: one line naming a file of the repository makes it "read this
+file first and follow it"; anything else (a few lines of the owner's rules, at most 4000 characters) is appended as
+it is. Empty (the default): nothing is added.
+
 ## Canary before tagging
 
 With `params.canary` naming a Warden of the fleet (one with `[update] channel = "canary"` and a beacon; see
@@ -367,6 +390,9 @@ trusted_authors    = ["my-other-agent"]
 required_checks    = ["lint", "test (ubuntu-latest)", "test (macos-latest)", "govulncheck", "coverage", "fuzz", "demos (ubuntu-latest)"]
 protected          = ["deploy/**"]            # extra paths on top of the human-only kernel (it can't be removed)
 review_brain       = ""                       # a second model's review before Warden merges its own PRs ("" = off)
+commit_name        = ""                       # the author of Warden's commits ("" = Warden <warden@localhost>)
+commit_email       = ""
+signoff            = "off"                    # "on": Signed-off-by on every commit and squash merge (the DCO)
 canary             = "warden-canary"          # a fleet instance with [update] channel = "canary" and a beacon
 canary_hours       = "24"                     # the rc runs healthy this long on it before vX.Y.Z is tagged
 canary_min_ticks   = "6"

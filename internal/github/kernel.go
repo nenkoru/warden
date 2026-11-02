@@ -144,10 +144,11 @@ func (c *Client) KernelTouched(ctx context.Context, n int) ([]string, error) {
 	return KernelFiles(names), nil
 }
 
-// Merge squash-merges a PR whose head is still sha. It lives here, in the
-// kernel, so its last check can't be edited away by an automatic change: a
-// PR touching the kernel is refused (ErrKernel) whoever calls Merge.
-func (c *Client) Merge(ctx context.Context, n int, sha, title string) (string, error) {
+// Merge squash-merges a PR whose head is still sha, as title and message
+// (the body; "" leaves GitHub's default). It lives here, in the kernel, so
+// its last check can't be edited away by an automatic change: a PR touching
+// the kernel is refused (ErrKernel) whoever calls Merge.
+func (c *Client) Merge(ctx context.Context, n int, sha, title, message string) (string, error) {
 	kern, err := c.KernelTouched(ctx, n)
 	if err != nil {
 		return "", fmt.Errorf("github: PR #%d: the kernel check failed: %w", n, err)
@@ -159,7 +160,11 @@ func (c *Client) Merge(ctx context.Context, n int, sha, title string) (string, e
 		SHA    string `json:"sha"`
 		Merged bool   `json:"merged"`
 	}
-	if err := c.do(ctx, "PUT", c.repoPath("/pulls/%d/merge", n), map[string]string{"sha": sha, "merge_method": "squash", "commit_title": title}, &r); err != nil {
+	in := map[string]string{"sha": sha, "merge_method": "squash", "commit_title": title}
+	if message != "" {
+		in["commit_message"] = message
+	}
+	if err := c.do(ctx, "PUT", c.repoPath("/pulls/%d/merge", n), in, &r); err != nil {
 		return "", err
 	}
 	if !r.Merged {

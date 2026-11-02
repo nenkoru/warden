@@ -47,6 +47,10 @@ experiment_tz      = ""                  # the IANA zone for the log's days and 
 experiment_context_tokens = "262144"  # the coding model's context: a failed attempt whose prompt reached 90% of it counts context-limit
 experiment_acts    = ""                  # acts whose results are task records (default: work-issue, merge-pr, pickup-branch)
 review_brain       = ""                  # a brain name: a second model reviews Warden's own issue PRs before merge-pr merges them ("" = off)
+commit_name        = ""                  # the author and committer of Warden's commits ("" = Warden)
+commit_email       = ""                  # … and their email ("" = warden@localhost)
+signoff            = "off"               # on: every commit Warden makes, and merge-pr's squash message, end with Signed-off-by: commit_name <commit_email> (the DCO)
+coder_rules        = ""                  # for the coding brain: a repository file it reads and follows (e.g. "CONTRIBUTING.md"), or the owner's own short text
 roadmap            = "on"                # on | off: the weekly roadmap (ROADMAP.md as a PR, a few issues) and the RFC timer
 roadmap_day        = "mon"               # the weekday (in roadmap_tz) from which the week's roadmap is due
 roadmap_tz         = "Europe/Moscow"

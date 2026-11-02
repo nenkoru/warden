@@ -121,7 +121,7 @@ func revertPR(ctx context.Context, c *github.Client, f domain.Finding, env *Env)
 		return Result{Summary: "revert-pr: " + err.Error()}
 	}
 	defer dropWorktree(ctx, root, work, wt)
-	if _, err := git(ctx, wt, "revert", "--no-edit", sha); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "revert", "--no-edit", sha); err != nil {
 		return Result{Summary: "revert-pr: " + err.Error()}
 	}
 	out, _ := git(ctx, wt, "diff", "--name-only", "HEAD~1", "HEAD")

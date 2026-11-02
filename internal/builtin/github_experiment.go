@@ -143,7 +143,7 @@ func publishLog(ctx context.Context, c *github.Client, f domain.Finding, env *En
 		return Result{Summary: "publish-log: " + err.Error()}
 	}
 	title := "docs: 27B experiment log for " + day
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", title); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "commit", "-q", "--no-verify", "-m", title); err != nil {
 		return Result{Summary: "publish-log: " + err.Error()}
 	}
 	if r, failed := pushOrHandOff(ctx, c, env, wt, branch, 0, []string{doc}, false); failed {

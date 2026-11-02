@@ -106,7 +106,7 @@ func TestMergeAllowed(t *testing.T) {
 		t.Fatal("a PR outside the kernel refused")
 	}
 	// and the client refuses on its own
-	if _, err := c.Merge(ctx, k, "b1", "b"); err == nil || merged(w, k) {
+	if _, err := c.Merge(ctx, k, "b1", "b", ""); err == nil || merged(w, k) {
 		t.Fatal("the client merged a kernel PR")
 	}
 	// one comment per head commit

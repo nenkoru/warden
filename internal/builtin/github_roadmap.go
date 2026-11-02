@@ -343,7 +343,7 @@ func roadmapPR(ctx context.Context, c *github.Client, env *Env, week, brainName,
 		return 0, "", &r
 	}
 	title := "docs: roadmap for " + week
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", title+"\n\nBrain: "+brainName+".\n"); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "commit", "-q", "--no-verify", "-m", title+"\n\nBrain: "+brainName+".\n"); err != nil {
 		return fail(err)
 	}
 	if r, failed := pushOrHandOff(ctx, c, env, wt, branch, 0, changed, false); failed {

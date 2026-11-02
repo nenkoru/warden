@@ -52,6 +52,10 @@ data:
     root               = "/state/repo"
     checks_mode        = "ci"
     max_issues_per_day = "3"
+    commit_name        = ""              # the author/committer of Warden's commits ("" = Warden), e.g. "<YOUR NAME>"
+    commit_email       = ""              # ("" = warden@localhost), e.g. "<YOUR-EMAIL>"
+    signoff            = "off"           # "on" for a repository that requires the DCO: Signed-off-by: commit_name <commit_email> on every commit and squash merge
+    coder_rules        = ""              # e.g. "CONTRIBUTING.md" (the coder reads and follows it) or a short text of your own
     trusted_authors    = []              # e.g. ["<OTHER-AGENT-LOGIN>"]
     delegate_cmd       = []              # e.g. ["<CLI>", "task", "create", "--title", "{title}", "--body", "{body}", "--to", "{agent}"]
     delegate_labels    = {}              # e.g. { infra = "<AGENT>" }

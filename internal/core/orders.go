@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/nenkoru/warden/internal/brain"
+	"github.com/nenkoru/warden/internal/builtin"
 	"github.com/nenkoru/warden/internal/domain"
 	"github.com/nenkoru/warden/internal/policy"
 	"github.com/nenkoru/warden/internal/version"
@@ -354,7 +355,7 @@ func (in *Instance) task(ctx context.Context, o Order, t *Tick) string {
 		return fail("checks red after the work, dropped: " + tail(out, 300))
 	}
 	_, _ = git(ctx, wt, "add", "-A")
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", "task from "+o.Sig.From+": "+short(o.Arg, 60)); err != nil {
+	if _, err := builtin.GitCommit(ctx, in.Dom.Params, wt, "commit", "-q", "--no-verify", "-m", "task from "+o.Sig.From+": "+short(o.Arg, 60)); err != nil {
 		return fail("nothing changed")
 	}
 	res.OK, res.Summary = true, "branch "+branch+", checks pass"

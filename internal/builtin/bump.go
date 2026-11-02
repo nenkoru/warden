@@ -271,7 +271,7 @@ func bump(ctx context.Context, with map[string]any, f domain.Finding, env *Env, 
 	if _, err := git(ctx, wt, "add", "-A"); err != nil {
 		return fail("git add", "", err)
 	}
-	if _, err := git(ctx, wt, "commit", "-q", "--no-verify", "-m", msg); err != nil {
+	if _, err := gitCommit(ctx, env, wt, "commit", "-q", "--no-verify", "-m", msg); err != nil {
 		return fail("git commit", "", err)
 	}
 	sha, _ := git(ctx, wt, "rev-parse", "--short", "HEAD")

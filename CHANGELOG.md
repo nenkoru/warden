@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- DCO sign-off for the `github-repo` pack: `params.commit_name` and `commit_email` set the author and committer of
+  every commit Warden makes (default `Warden <warden@localhost>`), and `signoff = "on"` (default `"off"`) ends each
+  of them — `work-issue` and its fix round, `publish-log`, `revert-pr`, `roadmap`, `release`, the bumps, a `task` —
+  with `Signed-off-by: <commit_name> <commit_email>`. `merge-pr` then sends its own squash message: the PR's commits'
+  `Signed-off-by` / `Co-authored-by` trailers, then Warden's sign-off. `params.coder_rules` (a repository file such
+  as `CONTRIBUTING.md`, or a short text) is added to the coding brain's prompt.
 - `foreach` on observe and inventory steps: run a step once per value of a list param
   (`foreach = { namespace = "{namespaces}" }`); findings carry the bound value, so an act on one runs where it was
   seen. The `k8s-namespace` pack uses it to watch a project's several namespaces (`namespaces`) with only a

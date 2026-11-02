@@ -144,12 +144,52 @@ func finding(step, key, kind, sev, subject, title, detail string) domain.Finding
 // git runs locally (it only touches the repository), never through hooks
 // Warden did not write, never with the owner's signing or credential helpers.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitAs(ctx, nil, dir, args...)
+}
+
+// CommitIdentity: the author and committer of every commit Warden makes
+// (params.commit_name, commit_email; each unset one: Warden <warden@localhost>).
+func CommitIdentity(params map[string]string) (name, email string) {
+	return or(params["commit_name"], "Warden"), or(params["commit_email"], "warden@localhost")
+}
+
+// Signoff: params.signoff = "on" ends every commit Warden makes, and the
+// squash message merge-pr sends, with a Signed-off-by trailer of
+// CommitIdentity (the DCO). Off by default.
+func Signoff(params map[string]string) bool { return params["signoff"] == "on" }
+
+func signoffLine(params map[string]string) string {
+	name, email := CommitIdentity(params)
+	return "Signed-off-by: " + name + " <" + email + ">"
+}
+
+// GitCommit runs a git command that makes a commit (commit, revert) in dir
+// as CommitIdentity, with --signoff when Signoff; core's task commits too.
+func GitCommit(ctx context.Context, params map[string]string, dir string, args ...string) (string, error) {
+	if Signoff(params) && len(args) > 0 {
+		args = append([]string{args[0], "--signoff"}, args[1:]...)
+	}
+	return gitAs(ctx, params, dir, args...)
+}
+
+// gitCommit: GitCommit with the step's params.
+func gitCommit(ctx context.Context, env *Env, dir string, args ...string) (string, error) {
+	var params map[string]string
+	if env != nil {
+		params = env.Params
+	}
+	return GitCommit(ctx, params, dir, args...)
+}
+
+// gitAs: git as CommitIdentity(params) (nil: Warden <warden@localhost>).
+func gitAs(ctx context.Context, params map[string]string, dir string, args ...string) (string, error) {
+	name, email := CommitIdentity(params)
 	argv := append([]string{"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
-		"-c", "credential.helper=", "-c", "user.name=Warden", "-c", "user.email=warden@localhost"}, args...)
+		"-c", "credential.helper=", "-c", "user.name=" + name, "-c", "user.email=" + email}, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Warden", "GIT_AUTHOR_EMAIL=warden@localhost",
-		"GIT_COMMITTER_NAME=Warden", "GIT_COMMITTER_EMAIL=warden@localhost", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME="+name, "GIT_AUTHOR_EMAIL="+email,
+		"GIT_COMMITTER_NAME="+name, "GIT_COMMITTER_EMAIL="+email, "GIT_TERMINAL_PROMPT=0")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
