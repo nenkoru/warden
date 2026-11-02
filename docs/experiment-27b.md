@@ -8,15 +8,15 @@ Days and weeks are in Europe/Moscow.
 
 | week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | tool-call errors / call | reverted | top failures | idle hours |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-W44 (so far) | 7 | 3 | 66% (2/3) | 2.1 | 0.1 | 7s | 13.7M / 21.2k | 0.04 (15/338) | 0 | loop 6, tool-call 4, wrong-edit 2 | 44.9 |
+| 2026-W44 | 7 | 3 | 66% (2/3) | 2.1 | 0.1 | 7s | 13.7M / 21.2k | 0.04 (15/338) | 0 | loop 6, tool-call 4, wrong-edit 2 | 68.7 |
 
 ## Days
 
-### 2026-11-01 (so far)
+### 2026-11-01
 
 No task worked.
 
-Idle: 0.2 h (off-hours 0.2 h).
+Idle: 24.0 h (off-hours 24.0 h).
 
 ### 2026-10-31
 
