@@ -13,8 +13,11 @@ import (
 // whether it succeeded (false is reported to the model as an error result).
 type Tool struct {
 	Name, Description string
-	Schema            map[string]any // JSON schema of the arguments object; nil = no arguments
-	Run               func(ctx context.Context, args map[string]any) (string, bool)
+	// Aliases: other names a model may call it by (read_file, str_replace,
+	// …); a call by an alias runs the tool.
+	Aliases []string
+	Schema  map[string]any // JSON schema of the arguments object; nil = no arguments
+	Run     func(ctx context.Context, args map[string]any) (string, bool)
 }
 
 // Brain answers one task. tools nil = a plain answer.
@@ -29,10 +32,18 @@ func (t Tool) schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 
-func find(tools []Tool, name string) *Tool {
+// Find: the tool called name, else the one with it as an alias (any case).
+func Find(tools []Tool, name string) *Tool {
 	for i := range tools {
 		if tools[i].Name == name {
 			return &tools[i]
+		}
+	}
+	for i := range tools {
+		for _, a := range tools[i].Aliases {
+			if strings.EqualFold(a, name) || strings.EqualFold(tools[i].Name, name) {
+				return &tools[i]
+			}
 		}
 	}
 	return nil

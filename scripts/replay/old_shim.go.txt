@@ -1,0 +1,16 @@
+//go:build replay
+
+package builtin
+
+import (
+	"github.com/nenkoru/warden/internal/brain"
+	"github.com/nenkoru/warden/internal/github"
+)
+
+// replay_test.go's side for a tree before the 27B harness work (v0.2 and
+// origin/main up to 2026-11-02): issueTask without the layout, no extra
+// request fields.
+
+func replayIssueTask(is github.Issue, wt string) string { return issueTask(is) }
+
+func replayConfig(c *brain.EndpointConfig) {}
