@@ -8,9 +8,22 @@ Days and weeks are in Europe/Moscow.
 
 | week | tasks | merged | first-push green | avg attempts | avg fix rounds | median wall time | tokens in / out | tool-call errors / call | reverted | top failures | idle hours |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-W45 (so far) | 1 | 0 | — | 1.0 | 0.0 | 1m 29s | 199.5k / 982 | 0.08 (1/13) | 0 | tool-call 1, wrong-edit 1 | 7.5 |
 | 2026-W44 | 7 | 3 | 66% (2/3) | 2.1 | 0.1 | 7s | 13.7M / 21.2k | 0.04 (15/338) | 0 | loop 6, tool-call 4, wrong-edit 2 | 68.7 |
 
 ## Days
+
+### 2026-11-02
+
+| task | PR | size | brain / model | attempts | steps | tool calls | tool-call errors | wall time | tokens in / out | CI first push | fix rounds | merged | reverted | review comments | failures |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| #30 | — | M | local / qwen3.8-27b-local | 1 | 9 | 13 | 1 | 1m 29s | 199.5k / 982 | — | 0 | no | no | 0 | tool-call, wrong-edit |
+
+Failures:
+
+- 00:12 #30 new: **tool-call, wrong-edit** — issue #30: the brain (local) made no change
+
+Idle: 7.5 h (off-hours 7.5 h).
 
 ### 2026-11-01
 
